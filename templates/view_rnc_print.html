@@ -63,7 +63,7 @@
                 box-shadow: none !important;
                 border: none !important;
                 border-top: none !important;
-                padding: 3px;
+                padding: 0px;
                 padding-top: 0 !important;
                 margin: 0;
                 margin-top: 0 !important;
@@ -75,12 +75,12 @@
             
             @page {
                 size: A4;
-                margin: 3mm 8mm;
+                margin: 2mm 5mm;
             }
             
             table {
-                margin-bottom: 2px !important;
-                font-size: 7px !important;
+                margin-bottom: 1px !important;
+                font-size: 6px !important;
                 border: 1px solid #000 !important;
                 border-collapse: collapse !important;
             }
@@ -89,7 +89,7 @@
                 border: none !important;
                 border-right: 1px solid #000 !important;
                 border-bottom: 1px solid #000 !important;
-                padding: 2px !important;
+                padding: 1px !important;
             }
             
             table td:last-child,
@@ -103,30 +103,30 @@
             }
             
             .field-label {
-                padding: 2px !important;
-                font-size: 6px !important;
+                padding: 1px !important;
+                font-size: 5px !important;
                 background: #f0f0f0 !important;
                 color: #000 !important;
                 border: 1px solid #000 !important;
-                line-height: 1.1 !important;
+                line-height: 1.0 !important;
             }
             
             .field-value {
-                padding: 3px !important;
-                font-size: 7px !important;
+                padding: 1px !important;
+                font-size: 6px !important;
                 min-height: auto !important;
                 border: 1px solid #000 !important;
                 color: #000 !important;
-                line-height: 1.2 !important;
+                line-height: 1.0 !important;
             }
             
             .section-title {
-                padding: 3px !important;
-                font-size: 8px !important;
+                padding: 2px !important;
+                font-size: 7px !important;
                 background: #fff !important;
                 color: #000 !important;
                 border: 1px solid #000 !important;
-                line-height: 1.1 !important;
+                line-height: 1.0 !important;
                 text-align: center !important;
                 font-weight: normal !important;
             }
@@ -144,11 +144,11 @@
 
         body {
             font-family: 'Segoe UI', 'Roboto', 'Arial', sans-serif;
-            font-size: 9px; /* Compacta */
-            line-height: 1.1; /* Espaçamento mínimo */
+            font-size: 8px; /* Mais compacta */
+            line-height: 1.0; /* Espaçamento mínimo */
             color: var(--text);
             background: var(--bg);
-            padding: 8px;
+            padding: 4px;
         }
 
         .container {
@@ -165,57 +165,57 @@
         .header {
             background: linear-gradient(135deg, var(--ippel-primary) 0%, var(--ippel-primary-dark) 100%);
             color: #fff;
-            padding: 10px 15px;
+            padding: 5px 10px;
             margin: 0;
             border-bottom: 2px solid var(--ippel-accent);
             position: relative;
             overflow: hidden;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 8px;
         }
 
         .header::before { display: none; }
 
         .header-logo {
-            height: 26px;
+            height: 20px;
             width: auto;
             object-fit: contain;
             filter: drop-shadow(0 1px 1px rgba(0,0,0,.25));
         }
 
         .header-info h1 {
-            font-size: 14px;
+            font-size: 11px;
             color: #fff;
-            margin: 0 0 4px 0;
+            margin: 0 0 2px 0;
             font-weight: 500;
         }
 
         .header-meta {
             display: flex;
-            gap: 10px;
-            font-size: 8px;
+            gap: 6px;
+            font-size: 7px;
             color: #ecf0f1;
             flex-wrap: wrap;
         }
 
         .header-meta span {
             background: rgba(255,255,255,0.18);
-            padding: 2px 6px;
-            border-radius: 10px;
+            padding: 1px 4px;
+            border-radius: 8px;
         }
 
         .rnc-badge {
             background: #ffffff;
             color: var(--ippel-primary-dark);
-            padding: 3px 8px;
-            border-radius: 12px;
+            padding: 2px 6px;
+            border-radius: 10px;
             font-weight: 500;
-            font-size: 10px;
+            font-size: 9px;
             border: 1px solid rgba(0,0,0,.08);
             position: absolute;
-            top: 10px;
-            right: 15px;
+            top: 5px;
+            right: 10px;
         }
 
         /* Controles de impressão */
@@ -251,12 +251,12 @@
 
         /* Seções ultra-compactas */
         .form-section {
-            margin: 6px 10px;
+            margin: 2px 6px;
             background: white;
             border: 1px solid var(--border);
-            border-radius: 6px;
+            border-radius: 4px;
             overflow: hidden;
-            box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
             transition: all 0.3s ease;
         }
 
@@ -267,9 +267,9 @@
         .section-title {
             background: linear-gradient(135deg, var(--ippel-primary) 0%, var(--ippel-primary-dark) 100%);
             color: #fff;
-            padding: 6px 12px;
+            padding: 3px 8px;
             font-weight: 500;
-            font-size: 10px;
+            font-size: 8px;
             border-bottom: none;
             text-align: left;
             position: relative;
@@ -279,36 +279,36 @@
 
         .form-row {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-            gap: 6px;
-            padding: 8px 12px;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 4px;
+            padding: 4px 8px;
         }
 
         .form-group {
             display: flex;
             flex-direction: column;
-            gap: 2px;
+            gap: 1px;
         }
 
         .form-label {
             font-weight: 500;
             color: #333;
-            font-size: 8px;
+            font-size: 7px;
             text-transform: uppercase;
-            letter-spacing: 0.2px;
+            letter-spacing: 0.1px;
         }
 
         .form-value {
-            padding: 4px 8px;
+            padding: 2px 4px;
             border: 1px solid var(--border);
-            border-radius: 4px;
-            font-size: 9px;
-            line-height: 1.2;
+            border-radius: 3px;
+            font-size: 7px;
+            line-height: 1.1;
             background: #fbfbfc;
             color: var(--text);
             white-space: pre-wrap;
             word-break: break-word;
-            min-height: 16px;
+            min-height: 12px;
             transition: all 0.3s ease;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -322,12 +322,12 @@
         .text-block {
             background: #fbfbfc;
             border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 6px 8px;
+            border-radius: 3px;
+            padding: 3px 5px;
             white-space: pre-wrap;
-            min-height: 20px;
-            font-size: 9px;
-            line-height: 1.2;
+            min-height: 14px;
+            font-size: 7px;
+            line-height: 1.1;
             word-break: break-word;
             transition: all 0.3s ease;
             overflow: hidden;
@@ -344,37 +344,37 @@
 
         /* Layout ultra-compacto para campos pequenos */
         .form-row.compact {
-            grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
-            gap: 4px;
-            padding: 6px 12px;
+            grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+            gap: 3px;
+            padding: 3px 8px;
         }
 
         .form-row.compact .form-group {
-            gap: 1px;
+            gap: 0px;
         }
 
         .form-row.compact .form-value {
-            padding: 3px 6px;
-            font-size: 8px;
+            padding: 2px 4px;
+            font-size: 7px;
         }
 
         /* Disposição e Inspeção ultra-compacta */
         .disposition-section {
             border: 1px solid var(--ippel-primary);
-            border-radius: 6px;
+            border-radius: 4px;
             background: white;
-            margin: 6px 10px;
+            margin: 2px 6px;
             overflow: hidden;
-            box-shadow: 0 2px 8px rgba(231, 76, 60, 0.18);
+            box-shadow: 0 1px 4px rgba(231, 76, 60, 0.18);
         }
 
         .disposition-header {
             background: linear-gradient(135deg, var(--ippel-primary) 0%, var(--ippel-primary-dark) 100%);
             color: #fff;
             text-align: center;
-            padding: 6px 0;
+            padding: 3px 0;
             font-weight: 500;
-            font-size: 10px;
+            font-size: 8px;
             display: flex;
             position: relative;
         }
@@ -385,7 +385,7 @@
             width: 50%;
             text-align: center;
             border-right: 1px solid rgba(255,255,255,0.3);
-            padding: 0 6px;
+            padding: 0 4px;
         }
 
         .disposition-header > div:last-child {
@@ -394,16 +394,16 @@
 
         .disposition-content {
             display: flex;
-            padding: 8px;
-            gap: 10px;
+            padding: 4px;
+            gap: 6px;
         }
 
         .disposition-left, .disposition-right {
             width: 50%;
-            padding: 6px;
-            font-size: 8px;
+            padding: 3px;
+            font-size: 7px;
             background: #f8f9fa;
-            border-radius: 4px;
+            border-radius: 3px;
         }
 
         .disposition-left {
@@ -413,10 +413,10 @@
         .checkbox {
             display: flex;
             align-items: center;
-            margin-bottom: 4px;
-            gap: 4px;
-            padding: 2px 6px;
-            border-radius: 3px;
+            margin-bottom: 2px;
+            gap: 3px;
+            padding: 1px 3px;
+            border-radius: 2px;
             transition: all 0.3s ease;
         }
 
@@ -425,8 +425,8 @@
         }
 
         .checkbox input[type="checkbox"] {
-            width: 12px;
-            height: 12px;
+            width: 10px;
+            height: 10px;
             accent-color: #3498db;
             cursor: pointer;
         }
@@ -434,16 +434,17 @@
         .checkbox label {
             font-weight: 400;
             color: #2c3e50;
+            font-size: 7px;
         }
 
         /* Assinaturas ultra-compactas */
         .signature-container {
             border: 1px solid #3498db;
-            border-radius: 6px;
+            border-radius: 4px;
             background: white;
-            margin: 6px 10px;
+            margin: 2px 6px;
             overflow: hidden;
-            box-shadow: 0 2px 8px rgba(52, 152, 219, 0.2);
+            box-shadow: 0 1px 4px rgba(52, 152, 219, 0.2);
         }
 
         .signature-dates {
@@ -454,9 +455,9 @@
 
         .signature-date {
             width: 33.33%;
-            padding: 4px;
+            padding: 2px;
             text-align: center;
-            font-size: 8px;
+            font-size: 7px;
             font-weight: 500;
             border-right: 1px solid #3498db;
             color: #2c3e50;
@@ -469,13 +470,13 @@
         .signature-date input {
             border: none;
             border-bottom: 1px solid #3498db;
-            width: 50px;
+            width: 40px;
             text-align: center;
-            font-size: 8px;
+            font-size: 7px;
             background: transparent;
             color: #2c3e50;
             font-weight: 400;
-            margin-top: 2px;
+            margin-top: 1px;
         }
 
         .signature-boxes {
@@ -485,9 +486,9 @@
 
         .signature-box {
             width: 33.33%;
-            padding: 8px 4px;
+            padding: 4px 2px;
             text-align: center;
-            font-size: 9px;
+            font-size: 7px;
             font-weight: 500;
             border-right: 1px solid #3498db;
             color: #2c3e50;
@@ -515,13 +516,13 @@
 
         .signature-name {
             width: 33.33%;
-            padding: 6px 4px;
+            padding: 3px 2px;
             text-align: center;
-            font-size: 9px;
+            font-size: 7px;
             font-weight: 500;
             border-right: 1px solid #3498db;
             color: #2c3e50;
-            min-height: 18px;
+            min-height: 12px;
             display: flex;
             align-items: center;
             justify-content: center;

@@ -230,16 +230,20 @@ def init_database():
             logger.error(f"Erro ao inicializar banco: {e}")
 
 def ensure_schema_migrations():
-    """Garantir que a tabela rnc_reports possua a coluna price."""
+    """Garantir que a tabela rncs possua a coluna price."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(rnc_reports)")
-        columns = [row[1] for row in cursor.fetchall()]
-        if 'price' not in columns:
-            cursor.execute("ALTER TABLE rnc_reports ADD COLUMN price REAL DEFAULT 0")
-            conn.commit()
-            logger.info("Migração aplicada: coluna 'price' adicionada em rnc_reports")
+        
+        # Verificar se a tabela rncs existe
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='rncs'")
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(rncs)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'price' not in columns:
+                cursor.execute("ALTER TABLE rncs ADD COLUMN price REAL DEFAULT 0")
+                conn.commit()
+                logger.info("Migração aplicada: coluna 'price' adicionada em rncs")
 
         # Garantir tabela de grupos
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='groups'")

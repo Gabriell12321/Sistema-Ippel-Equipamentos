@@ -91,6 +91,7 @@ function renderRNCs() {
                     <div><strong>Status:</strong> ${r.status||'Pendente'}</div>
                     <div><strong>Data:</strong> ${dt}</div>
                     <div><strong>Criador:</strong> ${r.user_name||'N/A'}</div>
+                    ${r.drawing ? `<div><strong>Desenho:</strong> ${r.drawing}</div>` : ''}
                 </div>
                 <div class="rnc-actions">
                     <button class="action-btn btn-view" onclick="viewRNC(${r.id})">👁️ Ver</button>
@@ -942,6 +943,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="detail-row">
                             <span class="detail-label">🔧 Equipamento:</span>
                             <span class="detail-value" title="${rnc.equipment}">${rnc.equipment}</span>
+                        </div>
+                        ` : ''}
+                        ${rnc.drawing ? `
+                        <div class="detail-row">
+                            <span class="detail-label">📐 Desenho:</span>
+                            <span class="detail-value" title="${rnc.drawing}">${rnc.drawing}</span>
                         </div>
                         ` : ''}
                         ${rnc.client ? `

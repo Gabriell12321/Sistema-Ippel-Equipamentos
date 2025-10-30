@@ -1,0 +1,1262 @@
+
+>         <script>
+              // Flag para saber se é modo Responder
+              const IS_REPLY = {{ 'true' if is_reply else 'false' }};
+              
+              // DEFINIR FUNÇÕES GLOBAIS ANTES DOS ELEMENTOS HTML
+              console.log('📝 Definindo funções globais para edit_rnc_form...');
+              
+              // Função para preencher assinatura automaticamente
+              window.preencherAssinatura = function(elemento) {
+                  console.log('✍️ Preenchendo assinatura...');
+                  const nomeElement = elemento.querySelector('div[id^="nome_coluna"]');
+                  
+                  // Se já existe assinatura, não permitir remover (travado)
+                  if (nomeElement && nomeElement.textContent && nomeElement.textContent.trim() !== '' && nomeElement.textContent !== 'NOME') {
+                      if (typeof mostrarNotificacao === 'function') {
+                          mostrarNotificacao('ℹ️ Assinatura já registrada.');
+                      } else {
+                          alert('Assinatura já registrada.');
+                      }
+                      return;
+                  }
+                  
+                  fetch('/api/user/info')
+                      .then(response => response.json())
+                      .then(data => {
+                          if (data.success) {
+                              const nomeUsuario = data.user.name;
+                              const departamento = data.user.department;
+                              
+                              if (nomeElement) {
+                                  nomeElement.textContent = `${nomeUsuario} (${departamento})`;
+                                  
+                                  elemento.style.transform = 'scale(1.02)';
+                                  elemento.style.transition = 'transform 0.2s ease';
+                                  
+                                  setTimeout(() => {
+                                      elemento.style.transform = 'scale(1)';
+                                  }, 200);
+                                  
+                                  if (typeof mostrarNotificacao === 'function') {
+                                      mostrarNotificacao('✅ Assinatura preenchida!');
+                                  }
+                                  
+                                  // Preencher data correspondente e travar inputs
+                                  const hoje = new Date();
+                                  const d = String(hoje.getDate()).padStart(2,'0');
+                                  const m = String(hoje.getMonth()+1).padStart(2,'0');
+                                  const y = String(hoje.getFullYear());
+                                  if (elemento.id === 'assinatura_coluna1') {
+                                      setDateInputs('insp1', d, m, y);
+                                  } else if (elemento.id === 'assinatura_coluna2') {
+                                      setDateInputs('eng', d, m, y);
+                                  } else if (elemento.id === 'assinatura_coluna3') {
+                                      setDateInputs('insp2', d, m, y);
+                                  }
+                              }
+                          } else {
+                              if (typeof mostrarNotificacao === 'function') {
+                                  mostrarNotificacao('❌ Erro: Usuário não autenticado', 'error');
+                              } else {
+                                  alert('Erro: Usuário não autenticado');
+                              }
+                          }
+                      })
+                      .catch(error => {
+                          console.error('Erro ao buscar informações do usuário:', error);
+                          if (typeof mostrarNotificacao === 'function') {
+                              mostrarNotificacao('❌ Erro ao preencher assinatura', 'error');
+                          } else {
+                              alert('Erro ao preencher assinatura');
+                          }
+                      });
+              };
+              
+              window.setDateInputs = function(prefix, d, m, y) {
+                  const di = document.getElementById(prefix + '_d');
+                  const mi = document.getElementById(prefix + '_m');
+                  const yi = document.getElementById(prefix + '_y');
+                  if (di && mi && yi) {
+                      di.value = d; mi.value = m; yi.value = y;
+                      di.readOnly = true; mi.readOnly = true; yi.readOnly = true;
+                      di.style.pointerEvents='none'; mi.style.pointerEvents='none'; yi.style.pointerEvents='none';
+                  }
+              };
+              
+              // Função verificarAssinaturas (necessária para salvarAlteracoes)
+              window.verificarAssinaturas = function() {
+                  console.log('🔍 Verificando assinaturas...');
+                  const assinaturas = [
+                      document.getElementById('nome_coluna1')?.textContent || '',
+                      document.getElementById('nome_coluna2')?.textContent || '',
+                      document.getElementById('nome_coluna3')?.textContent || ''
+                  ];
+                  console.log('   Assinaturas encontradas:', assinaturas);
+                  return assinaturas.some(assinatura => assinatura && assinatura !== 'NOME' && assinatura.trim() !== '');
+              };
+              
+              // Função mostrarNotificacao (necessária para outras funções)
+              window.mostrarNotificacao = function(mensagem, tipo = 'success') {
+                  console.log('📢 Notificação:', tipo, '-', mensagem);
+                  
+                  const notificacao = document.createElement('div');
+                  notificacao.textContent = mensagem;
+                  notificacao.style.cssText = `
+                      position: fixed;
+                      top: 20px;
+                      right: 20px;
+                      padding: 15px 25px;
+                      background: ${tipo === 'error' ? '#dc3545' : tipo === 'warning' ? '#ffc107' : '#28a745'};
+                      color: white;
+                      border-radius: 8px;
+                      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                      z-index: 10000;
+                      font-size: 14px;
+                      font-weight: 600;
+                      animation: slideIn 0.3s ease;
+                  `;
+                  
+                  document.body.appendChild(notificacao);
+                  
+                  setTimeout(() => {
+                      notificacao.style.opacity = '0';
+                      notificacao.style.transition = 'opacity 0.3s';
+                      setTimeout(() => {
+                          if (document.body.contains(notificacao)) {
+                              document.body.removeChild(notificacao);
+                          }
+                      }, 300);
+                  }, 3000);
+              };
+              
+              console.log('✓ Funções globais definidas com sucesso');
+          </script>
+          <!-- Banner de modo de edição (apenas para edição, não para resposta) -->
+          {% if not is_reply %}
+          <div class="edit-mode-banner">
+              ✏️ MODO DE EDIÇÃO - RNC: {{ rnc.rnc_number }}
+          </div>
+          {% endif %}
+  
+          <!-- Header with Logo -->
+          <div class="header">
+              <div class="logos" style="display:flex; gap:12px; align-items:center;">
+                  <img src="{{ url_for('static', filename='LOGOSQI.jpg') }}" alt="SQI Logo" style="width: 120px; height: 120px; border-radius: 15px; object-fit: contain; background: transparent; padding: 0; border: none;">
+                  <img src="/IPPELLOGO.jpg" alt="IPPEL Logo" class="apply-logo" style="width: 120px; height: 120px; border-radius: 15px; object-fit: contain; background: transparent; padding: 0; border: none;"
+                       data-logo-primary="/IPPELLOGO.jpg"
+                       data-logo-fallback1="/IPPELLOGO.jpg"
+                       data-logo-fallback2="{{ url_for('static', filename='LOGOSQI.jpg') }}"
+                       onerror="if(this.dataset.try1!=='1'){this.dataset.try1='1'; this.src=this.dataset.logoFallback1;} else if(this.dataset.try2!=='1'){this.dataset.try2='1'; this.src=this.dataset.logoFallback2;} else {this.style.display='none';}">
+              </div>
+              <div style="position: absolute; top: 20px; right: 30px; font-size: 12px; color: #6c757d; font-weight: 500; z-index: 10;">
+                  v2.0 | Sistema Premium
+              </div>
+          </div>
+  
+          <!-- Title Section -->
+          <div class="title-section">
+              <div style="margin-bottom: 10px;">
+                  <div style="width: 60px; height: 2px; background: linear-gradient(90deg, transparent, #6c757d, transparent); margin: 0 auto;"></div>
+              </div>
+              <div class="main-title">Relatório De Não Conformidades Internas – RNC</div>
+              <div class="subtitle">FABRICAÇÃO / RECEBIMENTO</div>
+          </div>
+  
+          <!-- Form Code -->
+          <div class="form-code">FQ – 002</div>
+  
+          <!-- RNC Number -->
+          <div class="rnc-number" style="text-align: center; margin-bottom: 20px;">
+              <label style="font-weight: 600; color: #495057; margin-right: 10px;">RNC Nº.:</label>
+              <input type="text" id="rnc_number" name="rnc_number" value="{{ rnc.rnc_number }}" 
+                     style="border: 1px solid #000; border-radius: 5px; padding: 8px; width: 200px; font-weight: 600;">
+          </div>
+  
+          <!-- ============================================ -->
+          <!-- SEÇÃO: DESENHO -->
+          <!-- ============================================ -->
+          <div style="margin: 25px 0; border: 1px solid #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);">
+  
+              <!-- Cabeçalho da Seção -->
+              <div style="background: white; color: black; padding: 12px 20px; font-weight: bold; font-size: 15px; text-align: center; letter-spacing: 1px;">
+                   DESENHO
+              </div>
+  
+              <!-- Conteúdo -->
+              <div style="padding: 20px; background: white;">
+                  <!-- Linha 1: CLIENTES | NUMERO DE DESENHO | REVISÃO -->
+                  <table style="margin-bottom: 0;">
+                      <tr>
+                          <td class="field-label" style="width: 33.33%;">CLIENTES</td>
+                          <td class="field-label" style="width: 33.33%;">NUMERO DE DESENHO</td>
+                          <td class="field-label" style="width: 33.33%;">REVISÃO</td>
+                      </tr>
+                      <tr>
+                          <td>
+                              <select id="client" name="client" class="input-field" data-field="client" style="padding: 8px; cursor: pointer;">
+                                  <option value="">Selecione o cliente</option>
+                                  {% for client in clients %}
+                                  <option value="{{ client }}" {% if rnc.client == client %}selected{% endif %}>{{ client }}</option>
+                                  {% endfor %}
+                              </select>
+                          </td>
+                          <td><input type="text" name="drawing" class="input-field" placeholder="Número do Desenho" data-field="drawing" value="{{ rnc.title or txt_fields.get('Desenho') or '' }}"></td>
+                          <td><input type="text" name="revision" class="input-field" placeholder="Revisão" data-field="revision" value="{{ rnc.revision or txt_fields.get('Revisão') or txt_fields.get('REVISAO') or '' }}"></td>
+                      </tr>
+                  </table>
+  
+                  <!-- Linha 2: CONJ. | EQUIPAMENTO -->
+                  <table style="margin-bottom: 0;">
+                      <tr>
+                          <td class="field-label" style="width: 50%;">CONJ.</td>
+                          <td class="field-label" style="width: 50%;">EQUIPAMENTO</td>
+                      </tr>
+                      <tr>
+                          <td><input type="text" name="conjunto" class="input-field" placeholder="Conjunto" data-field="conjunto" value="{{ rnc.conjunto or txt_fields.get('Conjunto') or '' }}"></td>
+                          <td><input type="text" id="equipment" name="equipment" class="input-field" placeholder="Equipamento" data-field="equipment" value="{{ rnc.equipment or '' }}"></td>
+                      </tr>
+                  </table>
+  
+                  <!-- Linha 3: DESCRIÇÃO -->
+                  <table style="margin-bottom: 0;">
+                      <tr>
+                          <td class="field-label" style="width: 100%;">DESCRIÇÃO</td>
+                      </tr>
+                      <tr>
+                          <td><input type="text" name="description_drawing" class="input-field" placeholder="Descrição do desenho" data-field="description_drawing" value="{{ rnc.description_drawing or txt_fields.get('Descrição da RNC') or txt_fields.get('Descrição do desenho') or '' }}"></td>
+                      </tr>
+                  </table>
+  
+                  <!-- 🔖 CAMPOS MOVIDOS PARA SEÇÃO COMPLEMENTARES -->
+                  <!-- CV, MOD, QTDE LOTE, MATERIAL, POSIÇÃO, MP e VALOR TOTAL agora estão na seção COMPLEMENTARES abaixo -->
+              </div>
+          </div>
+  
+          <!-- ============================================ -->
+          <!-- SEÇÃO: COMPLEMENTARES -->
+          <!-- ============================================ -->
+          <div style="margin: 20px 0; border: 1px solid #2c3e50; border-radius: 8px; overflow: hidden; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);">
+              <!-- Cabeçalho da Seção -->
+              <div style="background: linear-gradient(135deg, #34495e, #2c3e50); color: white; padding: 10px 15px; font-weight: bold; font-size: 14px; text-align: center; letter-spacing: 1px;">
+                   COMPLEMENTARES
+              </div>
+  
+              <!-- Conteúdo -->
+              <div style="padding: 12px 15px; background: #f8f9fa;">
+                  <!-- Linha 1: POSIÇÃO | MODELO | MATERIAL | QUANTIDADE -->
+                  <table style="margin-bottom: 8px; border: 1px solid #dee2e6; border-radius: 4px; overflow: hidden;">
+                      <tr>
+                          <td class="field-label" style="width: 25%; background: #e9ecef; font-size: 12px; padding: 6px;">POSIÇÃO</td>
+                          <td class="field-label" style="width: 25%; background: #e9ecef; font-size: 12px; padding: 6px;">MODELO</td>
+                          <td class="field-label" style="width: 25%; background: #e9ecef; font-size: 12px; padding: 6px;">MATERIAL</td>
+                          <td class="field-label" style="width: 25%; background: #e9ecef; font-size: 12px; padding: 6px;">QUANTIDADE</td>
+                      </tr>
+                      <tr>
+                          <td style="padding: 4px;"><input type="text" name="position" class="input-field" placeholder="Posição" data-field="position" style="height: 38px; font-size: 13px;" value="{{ rnc.position or txt_fields.get('POS') or '' }}"></td>
+                          <td style="padding: 4px;"><input type="text" name="modelo" class="input-field" placeholder="Modelo" data-field="modelo" style="height: 38px; font-size: 13px;" value="{{ rnc.modelo or txt_fields.get('Modelo') or '' }}"></td>
+                          <td style="padding: 4px;"><input type="text" name="material" class="input-field" placeholder="Material" data-field="material" style="height: 38px; font-size: 13px;" value="{{ rnc.material or txt_fields.get('Material') or '' }}"></td>
+                          <td style="padding: 4px;"><input type="number" id="quantity" name="quantity" class="input-field" placeholder="Quantidade" data-field="quantity" min="0" step="1" style="height: 38px; font-size: 13px;" value="{{ rnc.quantity or txt_fields.get('Quantidade') or '' }}"></td>
+                      </tr>
+                  </table>
+  
+                  <!-- Linha 2: CV | MP -->
+                  <table style="margin-bottom: 8px; border: 1px solid #dee2e6; border-radius: 4px; overflow: hidden;">
+                      <tr>
+                          <td class="field-label" style="width: 50%; background: #e9ecef; font-size: 12px; padding: 6px;">CV</td>
+                          <td class="field-label" style="width: 50%; background: #e9ecef; font-size: 12px; padding: 6px;">MP</td>
+                      </tr>
+                      <tr>
+                          <td style="padding: 4px;"><input type="text" name="cv" class="input-field" placeholder="CV" data-field="cv" style="height: 38px; font-size: 13px;" value="{{ rnc.cv or txt_fields.get('CV') or '' }}"></td>
+                          <td style="padding: 4px;"><input type="text" name="mp" class="input-field" placeholder="MP" data-field="mp" style="height: 38px; font-size: 13px;" value="{{ rnc.mp or txt_fields.get('MP') or '' }}"></td>
+                      </tr>
+                  </table>
+  
+                  <!-- Linha 3: VALOR TOTAL | OBSERVAÇÃO -->
+                  <table style="margin-bottom: 0; border: 1px solid #dee2e6; border-radius: 4px; overflow: hidden;">
+                      <tr>
+                          <td class="field-label" style="width: 50%; background: #e9ecef; font-size: 12px; padding: 6px;">VALOR TOTAL (R$)</td>
+                          <td class="field-label" style="width: 50%; background: #e9ecef; font-size: 12px; padding: 6px;">OBSERVAÇÃO</td>
+                      </tr>
+                      <tr>
+                          <td style="position: relative; padding: 4px;">
+                              <input type="text" id="price" name="price" class="input-field" placeholder="R$ 0,00" data-field="price"
+                                     inputmode="decimal" autocomplete="off" readonly style="background: #f8f9fa; cursor: pointer; height: 38px; font-size: 13px;"
+                                     value="{% if rnc.price %}R$ {{ ('%.2f' % (rnc.price|float)).replace('.', ',') }}{% else %}{% endif %}">
+                              <button type="button" onclick="openValoresSelectionModal()" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); padding: 6px 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600;" onmouseover="this.style.background='#0056b3'" onmouseout="this.style.background='#007bff'">
+                                  Adicionar
+                              </button>
+                              <!-- Lista de itens selecionados -->
+                              <div id="selectedValoresList" style="margin-top: 8px; max-height: 180px; overflow-y: auto; display: none; border: 1px solid #ddd; border-radius: 4px; padding: 8px; background: white;">
+                                  <!-- Itens serão adicionados aqui dinamicamente -->
+                              </div>
+                          </td>
+                          <td style="padding: 4px;"><input type="text" id="price_note" class="input-field" placeholder="Ex.: custo estimado, nota de orçamento" data-field="price_note" style="height: 38px; font-size: 13px;" value="{{ rnc.price_note or '' }}"></td>
+                      </tr>
+                  </table>
+              </div>
+          </div>
+  
+          <!-- ============================================ -->
+          <!-- SEÇÃO: ASSINATURAS CABEÇALHO -->
+          <!-- ============================================ -->
+          <div style="margin: 25px 0; border: 1px solid #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);">
+              <!-- Cabeçalho da Seção -->
+              <div style="background: white; color: black; padding: 12px 20px; font-weight: bold; font-size: 15px; text-align: center; letter-spacing: 1px;">
+                   ASSINATURAS CABEÇALHO
+              </div>
+  
+              <!-- Conteúdo -->
+              <div style="padding: 20px; background: white;">
+                  <!-- Linha 1: Setor responsável | Assinatura responsável | Data -->
+                  <table style="margin-bottom: 0;">
+                      <tr>
+                          <td class="field-label" style="width: 33.33%;">SETOR RESPONSÁVEL</td>
+                          <td class="field-label" style="width: 33.33%;">ASSINATURA RESPONSÁVEL</td>
+                          <td class="field-label" style="width: 33.33%;">DATA</td>
+                      </tr>
+                      <tr>
+                          <td>
+                              <select id="area_responsavel_select" name="area_responsavel" class="input-field" data-field="area_responsavel" onchange="onAreaResponsavelChange()" style="padding: 10px; border: 1px solid #e0e0e0; border-radius: 8px; font-size: 14px; width: 100%; background: white; cursor: pointer; transition: all 0.2s;">
+                                  <option value="">Selecione a Área Responsável</option>
+                              </select>
+                          </td>
+                          <td><input type="text" id="ass_responsavel" name="ass_responsavel" class="input-field" placeholder="Assinatura Responsável" data-field="signature_inspection_name" value="{{ rnc.signature_inspection_name or '' }}"></td>
+                          <td><input type="text" id="data_emissao" name="data_emissao" class="input-field" data-field="created_at" value="{{ (rnc.created_at or '')[:10] if rnc.created_at else '' }}"></td>
+                      </tr>
+                  </table>
+  
+                  <!-- Linha 2: Inspetor | Nome causador | Assinatura Causador -->
+                  <table style="margin-bottom: 0;">
+                      <tr>
+                          <td class="field-label" style="width: 33.33%;">INSPETOR</td>
+                          <td class="field-label" style="width: 33.33%;">NOME CAUSADOR</td>
+                          <td class="field-label" style="width: 33.33%;">ASSINATURA CAUSADOR</td>
+                      </tr>
+                      <tr>
+                          <td><input type="text" name="inspetor" class="input-field" placeholder="Inspetor" data-field="inspetor" value="{{ rnc.inspetor or '' }}"></td>
+                          <td>
+                              <select id="nome_responsavel" name="nome_responsavel" class="input-field" data-field="responsavel" onchange="onNomeResponsavelChange()" style="padding: 10px; border: 1px solid #e0e0e0; border-radius: 8px; font-size: 14px; width: 100%; background: white; cursor: pointer; transition: all 0.2s;">
+                                  <option value="">Selecione o Usuário Causador</option>
+                              </select>
+                          </td>
+                          <td><input type="text" name="assinatura_lider" id="assinatura_lider" class="input-field" placeholder="Digite a assinatura manualmente" data-field="signature_inspection2_name" value="{{ rnc.signature_inspection2_name or '' }}"></td>
+                      </tr>
+                  </table>
+              </div>
+          </div>
+  
+          <!-- ============================================ -->
+          <!-- SEÇÃO: DESCRIÇÃO DA NÃO CONFORMIDADE -->
+          <!-- ============================================ -->
+          <div style="margin: 25px 0; border: 1px solid #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);">
+              <!-- Cabeçalho da Seção -->
+              <div style="background: white; color: black; padding: 12px 20px; font-weight: bold; font-size: 15px; text-align: center; letter-spacing: 1px;">
+                   DESCRIÇÃO DA NÃO CONFORMIDADE
+              </div>
+  
+              <!-- Conteúdo -->
+              <div style="padding: 20px; background: white;">
+                  <table style="margin-bottom: 0;">
+                      <tr>
+                          <td class="item-column">ITEM</td>
+                          <td class="section-title">DESCRIÇÃO DA NÃO CONFORMIDADE</td>
+                      </tr>
+                      <tr>
+                          <td style="width: 60px;"></td>
+                          <td><textarea id="description" name="description" class="input-field large-text-area" placeholder="Descreva a não conformidade identificada...">{{ txt_fields.get('Descrição da RNC', '') or txt_fields.get('Descrição do desenho', '') or rnc.description or '' }}</textarea></td>
+                      </tr>
+                  </table>
+              </div>
+          </div>
+  
+          <!-- ============================================ -->
+          <!-- SEÇÃO: INSTRUÇÃO PARA RETRABALHO -->
+          <!-- ============================================ -->
+          <div style="margin: 25px 0; border: 1px solid #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);">
+              <!-- Cabeçalho da Seção -->
+              <div style="background: white; color: black; padding: 12px 20px; font-weight: bold; font-size: 15px; text-align: center; letter-spacing: 1px;">
+                   INSTRUÇÃO PARA RETRABALHO
+              </div>
+  
+              <!-- Conteúdo -->
+              <div style="padding: 20px; background: white;">
+                  <table style="margin-bottom: 0;">
+                      <tr>
+                          <td class="item-column">ITEM</td>
+                          <td class="section-title">INSTRUÇÃO PARA RETRABALHO</td>
+                      </tr>
+                      <tr>
+                          <td style="width: 60px;"></td>
+                          <td><textarea id="instruction_retrabalho" class="input-field medium-text-area" placeholder="Instruções detalhadas para correção...">{{ rnc.instruction_retrabalho or '' }}</textarea></td>
+                      </tr>
+                  </table>
+              </div>
+          </div>
+  
+          <!-- ============================================ -->
+          <!-- SEÇÃO: CAUSA DA RNC -->
+          <!-- ============================================ -->
+          <div style="margin: 25px 0; border: 1px solid #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);">
+              <!-- Cabeçalho da Seção -->
+              <div style="background: white; color: black; padding: 12px 20px; font-weight: bold; font-size: 15px; text-align: center; letter-spacing: 1px;">
+                   CAUSA DA RNC
+              </div>
+  
+              <!-- Conteúdo -->
+              <div style="padding: 20px; background: white;">
+                  <table style="margin-bottom: 0;">
+                      <tr>
+                          <td class="item-column">ITEM</td>
+                          <td class="section-title">CAUSA DA RNC</td>
+                      </tr>
+                      <tr>
+                          <td style="width: 60px;"></td>
+                          <td><textarea id="cause_rnc" class="input-field medium-text-area" placeholder="Análise da causa raiz...">{{ rnc.cause_rnc or '' }}</textarea></td>
+                      </tr>
+                  </table>
+              </div>
+          </div>
+  
+          <!-- ============================================ -->
+          <!-- SEÇÃO: AÇÃO A SER TOMADA -->
+          <!-- ============================================ -->
+          <div style="margin: 25px 0; border: 1px solid #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);">
+              <!-- Cabeçalho da Seção -->
+              <div style="background: white; color: black; padding: 12px 20px; font-weight: bold; font-size: 15px; text-align: center; letter-spacing: 1px;">
+                   AÇÃO A SER TOMADA
+              </div>
+  
+              <!-- Conteúdo -->
+              <div style="padding: 20px; background: white;">
+                  <table style="margin-bottom: 0;">
+                      <tr>
+                          <td class="item-column">ITEM</td>
+                          <td class="section-title">AÇÃO A SER TOMADA</td>
+                      </tr>
+                      <tr>
+                          <td style="width: 60px;"></td>
+                          <td><textarea id="action_rnc" class="input-field medium-text-area" placeholder="Ações corretivas e preventivas...">{{ rnc.action_rnc or '' }}</textarea></td>
+                      </tr>
+                  </table>
+              </div>
+          </div>
+  
+          <!-- ============================================ -->
+          <!-- SEÇÃO: DISPOSIÇÃO E INSPEÇÃO -->
+          <!-- ============================================ -->
+          <div style="margin: 25px 0; border: 1px solid #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);">
+              <!-- Cabeçalho da Seção -->
+              <div style="background: white; color: black; padding: 12px 20px; font-weight: bold; font-size: 15px; text-align: center; letter-spacing: 1px;">
+                   DISPOSIÇÃO E INSPEÇÃO
+              </div>
+  
+              <!-- Conteúdo -->
+              <div style="padding: 20px; background: white;">
+                  <!-- Header Banner -->
+                  <div style="width: 100%; background: #6c757d; color: white; text-align: center; padding: 12px 0; margin-bottom: 0; border-radius: 8px 8px 0 0; font-weight: bold; font-size: 14px; display: flex;">
+                      <div style="width: 50%; text-align: center; border-right: 1px solid white;">DISPOSIÇÃO DO MATERIAL NÃO-CONFORME</div>
+                      <div style="width: 50%; text-align: center;">INSPEÇÃO DO RETRABALHO</div>
+                  </div>
+  
+                  <!-- Main Content Section -->
+                  <div style="border: 1px solid #000; border-top: none; border-radius: 0 0 8px 8px; background: white; display: flex;">
+                      <!-- Left Section: Disposição do Material -->
+                      <div style="width: 50%; padding: 15px; border-right: 1px solid #000;">
+                          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; font-weight: bold;">
+                              <div style="display: flex; align-items: center;">
+                                  <input type="checkbox" id="usar" style="margin-right: 8px; width: 16px; height: 16px; accent-color: #6c757d;" {% if rnc.disposition_usar %}checked{% endif %}>
+                                  <label for="usar">USAR COMO ESTÁ</label>
+                              </div>
+                              <div style="display: flex; align-items: center;">
+                                  <input type="checkbox" id="retrabalhar" style="margin-right: 8px; width: 16px; height: 16px; accent-color: #6c757d;" {% if rnc.disposition_retrabalhar %}checked{% endif %}>
+                                  <label for="retrabalhar">RETRABALHAR</label>
+                              </div>
+                              <div style="display: flex; align-items: center;">
+                                  <input type="checkbox" id="rejeitar" style="margin-right: 8px; width: 16px; height: 16px; accent-color: #6c757d;" {% if rnc.disposition_rejeitar %}checked{% endif %}>
+                                  <label for="rejeitar">REJEITAR</label>
+                              </div>
+                              <div style="display: flex; align-items: center;">
+                                  <input type="checkbox" id="sucata" style="margin-right: 8px; width: 16px; height: 16px; accent-color: #6c757d;" {% if rnc.disposition_sucata %}checked{% endif %}>
+                                  <label for="sucata">SUCATA</label>
+                              </div>
+                              <div style="display: flex; align-items: center;">
+                                  <input type="checkbox" id="devolver_estoque" style="margin-right: 8px; width: 16px; height: 16px; accent-color: #6c757d;" {% if rnc.disposition_devolver_estoque %}checked{% endif %}>
+                                  <label for="devolver_estoque">DEVOLVER AO ESTOQUE</label>
+                              </div>
+                              <div style="display: flex; align-items: center;">
+                                  <input type="checkbox" id="devolver_fornecedor" style="margin-right: 8px; width: 16px; height: 16px; accent-color: #6c757d;" {% if rnc.disposition_devolver_fornecedor %}checked{% endif %}>
+                                  <label for="devolver_fornecedor">DEVOLVER AO FORNECEDOR</label>
+                              </div>
+                          </div>
+                      </div>
+  
+                      <!-- Right Section: Inspeção do Retrabalho -->
+                      <div style="width: 50%; padding: 15px;">
+                          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; font-weight: bold;">
+                              <div style="display: flex; align-items: center;">
+                                  <input type="checkbox" id="aprovado" style="margin-right: 8px; width: 16px; height: 16px; accent-color: #28a745;" {% if rnc.inspection_aprovado %}checked{% endif %}>
+                                  <label for="aprovado">APROVADO</label>
+                              </div>
+                              <div style="display: flex; align-items: center;">
+                                  <input type="checkbox" id="reprovado" style="margin-right: 8px; width: 16px; height: 16px; accent-color: #dc3545;" {% if rnc.inspection_reprovado %}checked{% endif %}>
+>     <script>
+          // ===== Recursos de seleção de valores (edição/resposta) =====
+          let selectedValoresData = [];
+          let valoresHoraDatabase = [];
+  
+          function timeToDecimal(timeStr) {
+              const parts = String(timeStr || '0:00').split(':');
+              const hours = parseInt(parts[0]) || 0;
+              const minutes = parseInt(parts[1]) || 0;
+              return hours + (minutes / 60);
+          }
+  
+          function decimalToTime(decimal) {
+              const hours = Math.floor(decimal || 0);
+              const minutes = Math.round(((decimal || 0) - hours) * 60);
+              return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+          }
+  
+          function generateTimeOptions(selectedValue = '01:00') {
+              const times = [
+                  '00:05','00:10','00:15','00:20','00:25','00:30','00:35','00:40','00:45','00:50','00:55','01:00',
+                  '01:05','01:10','01:15','01:20','01:25','01:30','01:35','01:40','01:45','01:50','01:55','02:00',
+                  '02:30','03:00','03:30','04:00','04:30','05:00','06:00','07:00','08:00','09:00','10:00','12:00',
+                  '16:00','20:00','24:00','32:00','40:00','48:00'
+              ];
+              return times.map(t => `<option value="${t}" ${t===selectedValue?'selected':''}>${t}</option>`).join('');
+          }
+  
+          async function loadValoresHoraDatabase() {
+              try {
+                  const r = await fetch('/api/valores-hora/list');
+                  const j = await r.json();
+                  if (j && j.success && Array.isArray(j.valores)) {
+                      valoresHoraDatabase = j.valores;
+                      populateValoresSelectionTable();
+                  }
+              } catch (e) {
+                  console.error('Erro ao carregar valores/hora:', e);
+              }
+          }
+  
+          function populateValoresSelectionTable() {
+              const tbody = document.getElementById('valoresSelectionTableBody');
+              if (!tbody) return;
+              tbody.innerHTML = '';
+              let currentSetor = '';
+              (valoresHoraDatabase || []).forEach(item => {
+                  if (item.setor && item.setor !== currentSetor) {
+                      currentSetor = item.setor;
+                      const setorRow = document.createElement('tr');
+                      setorRow.className = 'setor-header';
+                      setorRow.innerHTML = `<td colspan="6" style="background:#8b1538;color:#fff;font-weight:bold;padding:10px;font-size:14px;">${currentSetor}</td>`;
+                      tbody.appendChild(setorRow);
+                  }
+                  const isSelected = selectedValoresData.some(v => v.codigo === item.codigo);
+                  const horasValue = isSelected ? (selectedValoresData.find(v => v.codigo === item.codigo).horas_formatted || '01:00') : '01:00';
+                  const horasDecimal = timeToDecimal(horasValue);
+                  const row = document.createElement('tr');
+                  row.className = 'valor-selection-row';
+                  row.setAttribute('data-codigo', item.codigo);
+                  const selectStyle = isSelected ? 'width:100%;padding:6px;border:1px solid #ced4da;border-radius:4px;text-align:center;font-size:13px;cursor:pointer;background:white;' : 'width:100%;padding:6px;border:1px solid #ced4da;border-radius:4px;text-align:center;font-size:13px;cursor:not-allowed;background:#e9ecef;color:#6c757d;';
+                  row.innerHTML = `
+                      <td style="padding:10px;text-align:center;border-bottom:1px solid #e9ecef;"><input type="checkbox" class="valor-checkbox" value="${item.codigo}" ${isSelected?'checked':''} onchange="toggleValorSelection('${item.codigo}')" style="width:18px;height:18px;cursor:pointer;"></td>
+                      <td style="padding:10px;border-bottom:1px solid #e9ecef;font-weight:600;color:#495057;">${item.codigo}</td>
+                      <td style="padding:10px;border-bottom:1px solid #e9ecef;color:#6c757d;">${item.descricao}</td>
+                      <td style="padding:10px;text-align:right;border-bottom:1px solid #e9ecef;color:#28a745;font-weight:600;">R$ ${(parseFloat(item.valor_hora)||0).toFixed(2).replace('.', ',')}</td>
+                      <td style="padding:10px;text-align:center;border-bottom:1px solid #e9ecef;"><select class="horas-input" data-codigo="${item.codigo}" ${isSelected?'':'disabled'} onchange="updateHorasForValor('${item.codigo}', this.value)" style="${selectStyle}">${generateTimeOptions(horasValue)}</select></td>
+                      <td style="padding:10px;text-align:right;border-bottom:1px solid #e9ecef;font-weight:700;color:#007bff;" class="subtotal-cell" data-codigo="${item.codigo}">R$ ${((parseFloat(item.valor_hora)||0) * horasDecimal).toFixed(2).replace('.', ',')}</td>
+                  `;
+                  if (isSelected) row.style.background = '#e7f5ff';
+                  tbody.appendChild(row);
+              });
+              updateModalTotal();
+          }
+  
+          async function openValoresSelectionModal() {
+              const modal = document.getElementById('valoresSelectionModal');
+              if (!modal) return;
+              modal.style.display = 'block';
+              document.body.style.overflow = 'hidden';
+              if (valoresHoraDatabase.length === 0) {
+                  await loadValoresHoraDatabase();
+              } else {
+                  populateValoresSelectionTable();
+              }
+          }
+          function closeValoresSelectionModal() {
+              const modal = document.getElementById('valoresSelectionModal');
+              if (!modal) return;
+              modal.style.display = 'none';
+              document.body.style.overflow = 'auto';
+          }
+          function toggleValorSelection(codigo) {
+              const checkbox = document.querySelector(`.valor-checkbox[value="${codigo}"]`);
+              if (!checkbox) return;
+              const row = checkbox.closest('tr');
+              const horasInput = row ? row.querySelector('.horas-input') : null;
+              if (checkbox.checked) {
+                  const valorItem = (valoresHoraDatabase||[]).find(v => v.codigo === codigo);
+                  if (valorItem) {
+                      const horasFormatted = (horasInput && horasInput.value) || '01:00';
+                      const horasDecimal = timeToDecimal(horasFormatted);
+                      selectedValoresData.push({ codigo: valorItem.codigo, descricao: valorItem.descricao, setor: valorItem.setor, valor_hora: parseFloat(valorItem.valor_hora)||0, horas: horasDecimal, horas_formatted: horasFormatted, subtotal: (parseFloat(valorItem.valor_hora)||0) * horasDecimal });
+                      if (horasInput) { horasInput.disabled = false; horasInput.style.cursor = 'pointer'; horasInput.style.backgroundColor = 'white'; }
+                      if (row) row.style.background = '#e7f5ff';
+                  }
+              } else {
+                  selectedValoresData = selectedValoresData.filter(v => v.codigo !== codigo);
+                  if (horasInput) { horasInput.disabled = true; horasInput.style.cursor = 'not-allowed'; horasInput.style.backgroundColor = '#e9ecef'; horasInput.value = '01:00'; }
+                  if (row) row.style.background = '';
+              }
+              updateModalTotal();
+              updateSelectedCount();
+          }
+          function updateHorasForValor(codigo, horasFormatted) {
+              const horasDecimal = timeToDecimal(horasFormatted);
+              const item = selectedValoresData.find(v => v.codigo === codigo);
+              if (item) {
+                  item.horas = horasDecimal;
+                  item.horas_formatted = horasFormatted;
+                  item.subtotal = (parseFloat(item.valor_hora)||0) * horasDecimal;
+              }
+              const cell = document.querySelector(`.subtotal-cell[data-codigo="${codigo}"]`);
+              if (cell) cell.textContent = `R$ ${item.subtotal.toFixed(2).replace('.', ',')}`;
+              updateModalTotal();
+          }
+          // Função para remover duplicação de Máquina/Funcionário com mesmo valor
+          function removeDuplicatesMaquinaFuncionario(items) {
+              if (!items || items.length === 0) return items;
+              
+              // Agrupar por subtotal (valor final igual)
+              const bySubtotal = {};
+              items.forEach(item => {
+                  const key = item.subtotal.toFixed(2);
+                  if (!bySubtotal[key]) bySubtotal[key] = [];
+                  bySubtotal[key].push(item);
+              });
+              
+              // Para cada grupo de subtotal igual, verificar se tem Máquina E Funcionário
+              const result = [];
+              Object.values(bySubtotal).forEach(group => {
+                  if (group.length === 1) {
+                      // Não tem duplicação, adiciona normalmente
+                      result.push(group[0]);
+                  } else {
+                      // Verificar se tem Máquina e Funcionário (ou termos similares)
+                      const hasMaquina = group.some(it => /máquina|maquina|equipamento|cnc|plasma|oxicorte|corte/i.test(it.descricao));
+                      const hasFuncionario = group.some(it => /funcionário|funcionario|operador|pessoa|mão.*obra|mao.*obra/i.test(it.descricao));
+                      
+                      if (hasMaquina && hasFuncionario) {
+                          // Tem ambos com mesmo valor - DUPLICAÇÃO DETECTADA!
+                          // Manter apenas o item de Funcionário (remove Máquina)
+                          const funcionarioItem = group.find(it => /funcionário|funcionario|operador|pessoa|mão.*obra|mao.*obra/i.test(it.descricao));
+                          if (funcionarioItem) {
+                              result.push(funcionarioItem);
+                              console.log(`⚠️ Duplicação removida: Máquina e Funcionário com valor R$ ${funcionarioItem.subtotal.toFixed(2)} - mantido apenas Funcionário`);
+                          } else {
+                              // Fallback: manter o primeiro item
+                              result.push(group[0]);
+                          }
+                      } else {
+                          // Não é caso de Máquina+Funcionário, adiciona todos
+                          result.push(...group);
+                      }
+                  }
+              });
+              
+              return result;
+          }
+          
+          function updateModalTotal() {
+              // Remover duplicações antes de calcular total
+              const itemsUnique = removeDuplicatesMaquinaFuncionario(selectedValoresData || []);
+              const total = itemsUnique.reduce((s, it) => s + (it.subtotal||0), 0);
+              const el = document.getElementById('modalTotalValue');
+              if (el) el.textContent = `R$ ${total.toFixed(2).replace('.', ',')}`;
+          }
+          function updateSelectedCount() {
+              const el = document.getElementById('selectedValoresCount');
+              if (el) el.textContent = (selectedValoresData||[]).length;
+          }
+          function toggleAllValores() {
+              const selectAll = document.getElementById('selectAllValores');
+              const checkboxes = document.querySelectorAll('.valor-checkbox');
+              checkboxes.forEach(cb => { if (cb.checked !== (selectAll && selectAll.checked)) { cb.checked = !!(selectAll && selectAll.checked); toggleValorSelection(cb.value); } });
+          }
+          function clearValoresSelection() {
+              if ((selectedValoresData||[]).length === 0) return;
+              if (!confirm('Deseja limpar todos os valores selecionados?')) return;
+              selectedValoresData = [];
+              const checkboxes = document.querySelectorAll('.valor-checkbox');
+              checkboxes.forEach(cb => { cb.checked = false; const row = cb.closest('tr'); const horasInput = row ? row.querySelector('.horas-input') : null; if (horasInput){ horasInput.disabled = true; horasInput.value = '01:00'; horasInput.style.cursor = 'not-allowed'; horasInput.style.backgroundColor = '#e9ecef'; } if (row) row.style.background = ''; });
+              const sa = document.getElementById('selectAllValores'); if (sa) sa.checked = false;
+              updateModalTotal();
+              updateSelectedCount();
+          }
+          function applyValoresSelection() {
+              if ((selectedValoresData||[]).length === 0) { alert('Selecione pelo menos um item!'); return; }
+              // Remover duplicações antes de aplicar
+              const itemsUnique = removeDuplicatesMaquinaFuncionario(selectedValoresData);
+              const total = itemsUnique.reduce((s, it) => s + (it.subtotal||0), 0);
+              const priceInput = document.getElementById('price');
+              if (priceInput) priceInput.value = `R$ ${total.toFixed(2).replace('.', ',')}`;
+              
+              // Atualizar selectedValoresData com lista sem duplicações
+              selectedValoresData = itemsUnique;
+              
+              displaySelectedValoresList();
+              closeValoresSelectionModal();
+          }
+          function displaySelectedValoresList() {
+              const listDiv = document.getElementById('selectedValoresList');
+              if (!listDiv) return;
+              if ((selectedValoresData||[]).length === 0) { listDiv.style.display = 'none'; return; }
+              listDiv.style.display = 'block';
+              
+              // Usar lista sem duplicações
+              const itemsToDisplay = selectedValoresData;
+              const total = itemsToDisplay.reduce((s, it) => s + (it.subtotal||0), 0);
+              
+              listDiv.innerHTML = `
+                  <div style="margin-bottom:10px;font-weight:600;color:#495057;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #dee2e6;padding-bottom:8px;">
+                      <span>Itens do Orçamento</span>
+                      <span style="color:#28a745;font-size:16px;">Total: R$ ${total.toFixed(2).replace('.', ',')}</span>
+                  </div>
+                  ${itemsToDisplay.map(item => `
+                      <div style="padding:8px;border-bottom:1px solid #e9ecef;display:flex;justify-content:space-between;align-items:center;">
+                          <div style="flex:1;">
+                              <div style="font-weight:600;color:#495057;font-size:12px;">${item.codigo} - ${item.descricao}</div>
+                              <div style="font-size:11px;color:#6c757d;">${item.horas_formatted || decimalToTime(item.horas)} × R$ ${item.valor_hora.toFixed(2).replace('.', ',')} = <strong style="color:#007bff;">R$ ${item.subtotal.toFixed(2).replace('.', ',')}</strong></div>
+                          </div>
+                      </div>
+                  `).join('')}
+              `;
+          }
+          function filterValoresSelection() {
+              const term = (document.getElementById('valoresSelectionSearch')?.value || '').toLowerCase();
+              document.querySelectorAll('#valoresSelectionTableBody tr').forEach(row => {
+                  if (row.classList.contains('setor-header')) return;
+                  const t = (row.textContent || '').toLowerCase();
+                  row.style.display = (t.includes(term) ? '' : 'none');
+              });
+          }
+      </script>
+      
+      <!-- Barra de ações moderna -->
+      <div class="action-bar">
+          <button class="action-btn dashboard-btn" title="Voltar ao Dashboard" onclick="window.location.href='/dashboard'">
+              🏠
+              <span class="label">Dashboard</span>
+          </button>
+          <button id="btnSalvar" class="action-btn save-btn" title="Carregando..." onclick="salvarAlteracoes()" disabled style="opacity: 0.5; cursor: not-allowed;">
+              💾
+              <span class="label">Carregando...</span>
+          </button>
+      </div>
+  </div>
+  
+> <script>
+          console.log('🔧 Script carregado - verificando funções...');
+          
+          // Cache do usuário atual para uso em assinaturas
+          let __CURRENT_USER_NAME = null;
+          let __CURRENT_USER_DEPT = null;
+          
+          // Função para mostrar notificações
+          function mostrarNotificacao(mensagem, tipo = 'success') {
+              console.log('📢 Notificação:', mensagem, tipo);
+              const notificacao = document.createElement('div');
+              
+              let background, shadow;
+              if (tipo === 'error') {
+                  background = 'linear-gradient(135deg, #dc3545 0%, #c82333 100%)';
+                  shadow = 'rgba(220, 53, 69, 0.3)';
+              } else {
+                  background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
+                  shadow = 'rgba(40, 167, 69, 0.3)';
+              }
+              
+              notificacao.style.cssText = `
+                  position: fixed;
+                  top: 20px;
+                  right: 20px;
+                  background: ${background};
+                  color: white;
+                  padding: 12px 20px;
+                  border-radius: 8px;
+                  box-shadow: 0 4px 15px ${shadow};
+                  z-index: 3000;
+                  animation: slideInRight 0.3s ease-out;
+                  font-size: 14px;
+                  font-weight: 500;
+              `;
+              
+              notificacao.textContent = mensagem;
+              document.body.appendChild(notificacao);
+              
+              setTimeout(() => {
+                  notificacao.style.animation = 'slideOutRight 0.3s ease-in';
+                  setTimeout(() => {
+                      if (document.body.contains(notificacao)) {
+                          document.body.removeChild(notificacao);
+                      }
+                  }, 300);
+              }, 3000);
+          }
+  
+          // Função para verificar se há pelo menos uma assinatura
+          function verificarAssinaturas() {
+              console.log('🔍 Verificando assinaturas...');
+              const assinaturas = [
+                  document.getElementById('nome_coluna1')?.textContent || '',
+                  document.getElementById('nome_coluna2')?.textContent || '',
+                  document.getElementById('nome_coluna3')?.textContent || ''
+              ];
+              
+              console.log('📝 Assinaturas encontradas:', assinaturas);
+              return assinaturas.some(assinatura => assinatura && assinatura !== 'NOME' && assinatura.trim() !== '');
+          }
+  
+          // Função chamada quando o setor responsável é alterado
+          async function onAreaResponsavelChange() {
+              console.log('🏢 Setor responsável alterado');
+              const select = document.getElementById('area_responsavel_select');
+              const selectedGroup = select.value;
+              
+              if (!selectedGroup) {
+                  console.log('⚠️ Nenhum setor selecionado');
+                  return;
+              }
+              
+              console.log('🔍 Buscando gerente do grupo:', selectedGroup);
+              
+              try {
+                  // Buscar o gerente do grupo selecionado
+                  const response = await fetch(`/admin/managers/api/group/${encodeURIComponent(selectedGroup)}/manager`, {
+                      credentials: 'include'
+                  });
+                  
+                  const data = await response.json();
+                  
+                  if (data.success && data.manager) {
+                      console.log('✅ Gerente encontrado:', data.manager.name);
+                      
+                      // Preencher assinatura automaticamente
+                      const assResponsavelInput = document.getElementById('ass_responsavel');
+                      if (assResponsavelInput && (!assResponsavelInput.value || assResponsavelInput.value.trim() === '')) {
+                          assResponsavelInput.value = data.manager.name;
+                          console.log('✍️ Assinatura responsável preenchida automaticamente:', data.manager.name);
+                          mostrarNotificacao(`✅ Assinatura preenchida: ${data.manager.name}`, 'success');
+                      }
+                  } else {
+                      console.warn('⚠️ Nenhum gerente definido para este setor');
+                      mostrarNotificacao('⚠️ Nenhum gerente definido para este setor', 'error');
+                  }
+              } catch (error) {
+                  console.error('❌ Erro ao buscar gerente:', error);
+                  mostrarNotificacao('❌ Erro ao buscar gerente do setor', 'error');
+              }
+          }
+          
+          // Função chamada quando o nome do responsável é alterado (causador)
+          function onNomeResponsavelChange() {
+              console.log('👤 Nome responsável (causador) alterado');
+              // Aqui pode adicionar lógica adicional se necessário
+          }
+  
+          // Função para preencher assinatura automaticamente
+          function preencherAssinatura(elemento) {
+              console.log('✍️ Preenchendo assinatura...');
+              const nomeElement = elemento.querySelector('div[id^="nome_coluna"]');
+              // Se já existe assinatura, não permitir remover (travado)
+              if (nomeElement && nomeElement.textContent && nomeElement.textContent.trim() !== '' && nomeElement.textContent !== 'NOME') {
+                  mostrarNotificacao('Assinatura já registrada.');
+                  return;
+              }
+              
+              fetch('/api/user/info')
+                  .then(response => response.json())
+                  .then(data => {
+                      if (data.success) {
+                          const nomeUsuario = data.user.name;
+                          const departamento = data.user.department;
+                          
+                          if (nomeElement) {
+                              nomeElement.textContent = `${nomeUsuario} (${departamento})`;
+                              
+                              elemento.style.transform = 'scale(1.02)';
+                              elemento.style.transition = 'transform 0.2s ease';
+                              
+                              setTimeout(() => {
+                                  elemento.style.transform = 'scale(1)';
+                              }, 200);
+                              
+                              mostrarNotificacao('✅ Assinatura preenchida automaticamente!');
+                              // Preencher data correspondente e travar inputs
+                              const hoje = new Date();
+                              const d = String(hoje.getDate()).padStart(2,'0');
+                              const m = String(hoje.getMonth()+1).padStart(2,'0');
+                              const y = String(hoje.getFullYear());
+                              if (elemento.id === 'assinatura_coluna1') {
+                                  setDateInputs('insp1', d, m, y);
+                              } else if (elemento.id === 'assinatura_coluna2') {
+                                  setDateInputs('eng', d, m, y);
+                              } else if (elemento.id === 'assinatura_coluna3') {
+                                  setDateInputs('insp2', d, m, y);
+                              }
+                          }
+                      } else {
+                          mostrarNotificacao('❌ Erro: Usuário não autenticado', 'error');
+                      }
+                  })
+                  .catch(error => {
+                      console.error('Erro ao buscar informações do usuário:', error);
+                      mostrarNotificacao('❌ Erro ao preencher assinatura', 'error');
+                  });
+          }
+  
+          function setDateInputs(prefix, d, m, y) {
+              const di = document.getElementById(prefix + '_d');
+              const mi = document.getElementById(prefix + '_m');
+              const yi = document.getElementById(prefix + '_y');
+              if (di && mi && yi) {
+                  di.value = d; mi.value = m; yi.value = y;
+                  di.readOnly = true; mi.readOnly = true; yi.readOnly = true;
+                  di.style.pointerEvents='none'; mi.style.pointerEvents='none'; yi.style.pointerEvents='none';
+              }
+          }
+  
+          // Função para salvar alterações (implementação completa)
+          window.salvarAlteracoes = function salvarAlteracoes() {
+              console.log('💾 Função salvarAlteracoes chamada!');
+              
+              // Verificar se há pelo menos uma assinatura
+              if (!verificarAssinaturas()) {
+                  mostrarNotificacao('❌ É obrigatório preencher pelo menos uma assinatura!', 'error');
+                  return;
+              }
+  
+              // Normalizar: se data foi preenchida e nome ficou 'NOME', completar com usuário atual
+              (function normalizeSignatures(){
+                  const s = [
+                      {prefix:'insp1', id:'nome_coluna1'},
+                      {prefix:'eng', id:'nome_coluna2'},
+                      {prefix:'insp2', id:'nome_coluna3'}
+                  ];
+                  s.forEach(({prefix,id})=>{
+                      const nameEl = document.getElementById(id);
+                      const di = document.getElementById(prefix+'_d');
+                      const mi = document.getElementById(prefix+'_m');
+                      const yi = document.getElementById(prefix+'_y');
+                      const dateFilled = (di?.value||'')!=='' || (mi?.value||'')!=='' || (yi?.value||'')!=='';
+                      const hasName = nameEl && nameEl.textContent && nameEl.textContent.trim()!=='' && nameEl.textContent!=='NOME';
+                      if (dateFilled && !hasName) {
+                          if (nameEl && __CURRENT_USER_NAME) {
+                              nameEl.textContent = __CURRENT_USER_NAME + (__CURRENT_USER_DEPT ? ' ('+__CURRENT_USER_DEPT+')' : '');
+                          }
+                      }
+                  });
+              })();
+  
+              // 🔒 PRIMEIRO: DETECTAR TODOS OS CAMPOS BLOQUEADOS
+              {% if is_reply %}
+              // Esta variável será preenchida pela API de campos bloqueados
+              window.apiBlockedFields = window.apiBlockedFields || [];
+              const disabledFieldNames = new Set(window.apiBlockedFields);
+              
+              // 1. Detectar inputs/textareas/selects desabilitados diretamente
+              document.querySelectorAll('input:disabled, select:disabled, textarea:disabled').forEach(el => {
+                  if (el.id) {
+                      disabledFieldNames.add(el.id);
+                  }
+              });
+              
+              console.log('🔒 Campos bloqueados detectados:', Array.from(disabledFieldNames));
+              console.log('🔒 Campos bloqueados da API:', window.apiBlockedFields);
+              {% endif %}
+              
+              // 🔒 SEGUNDO: COLETAR APENAS CAMPOS NÃO BLOQUEADOS
+              const formData = {};
+              
+              {% if is_reply %}
+              // Modo RESPOSTA: adicionar apenas se NÃO bloqueado
+              
+              // Informações principais
+              if (!disabledFieldNames.has('title')) {
+                  formData.title = document.getElementById('title')?.value ?? {{ (rnc.title or "") | tojson }};
+              }
+              if (!disabledFieldNames.has('description')) {
+                  formData.description = document.getElementById('description')?.value ?? {{ (rnc.description or "") | tojson }};
+              }
+              if (!disabledFieldNames.has('equipment')) {
+                  formData.equipment = document.getElementById('equipment')?.value ?? {{ (rnc.equipment or "") | tojson }};
+              }
+              if (!disabledFieldNames.has('client')) {
+                  formData.client = document.getElementById('client')?.value ?? {{ (rnc.client or "") | tojson }};
+              }
+              if (!disabledFieldNames.has('rnc_number')) {
+                  formData.rnc_number = document.getElementById('rnc_number')?.value || {{ rnc.rnc_number | tojson }};
+              }
+              
+              // Dados técnicos do produto
+              if (!disabledFieldNames.has('mp')) {
+                  formData.mp = document.getElementById('mp')?.value || '';
+              }
+              if (!disabledFieldNames.has('revision')) {
+                  formData.revision = document.getElementById('revision')?.value || '';
+              }
+              if (!disabledFieldNames.has('position')) {
+                  formData.position = document.getElementById('position')?.value || '';
+              }
+              if (!disabledFieldNames.has('cv')) {
+                  formData.cv = document.getElementById('cv')?.value || '';
+              }
+              if (!disabledFieldNames.has('conjunto')) {
+                  formData.conjunto = document.getElementById('conjunto')?.value || '';
+              }
+              if (!disabledFieldNames.has('modelo')) {
+                  formData.modelo = document.getElementById('modelo')?.value || '';
+              }
+              if (!disabledFieldNames.has('description_drawing')) {
+                  formData.description_drawing = document.getElementById('description_drawing')?.value || '';
+              }
+              if (!disabledFieldNames.has('quantity')) {
+                  formData.quantity = document.getElementById('quantity')?.value || '';
+              }
+              if (!disabledFieldNames.has('material')) {
+                  formData.material = document.getElementById('material')?.value || '';
+              }
+              if (!disabledFieldNames.has('purchase_order')) {
+                  formData.purchase_order = document.getElementById('purchase_order')?.value || '';
+              }
+              
+              // Responsabilidades
+              if (!disabledFieldNames.has('responsavel')) {
+                  formData.responsavel = document.getElementById('responsavel')?.value || '';
+              }
+              if (!disabledFieldNames.has('inspetor')) {
+                  formData.inspetor = document.getElementById('inspetor')?.value || '';
+              }
+              if (!disabledFieldNames.has('area_responsavel')) {
+                  formData.area_responsavel = document.getElementById('area_responsavel')?.value || '';
+              }
+              if (!disabledFieldNames.has('created_at')) {
+                  formData.created_at = document.getElementById('created_at')?.value || '';
+              }
+              
+              // Seções textuais
+              if (!disabledFieldNames.has('instruction_retrabalho')) {
+                  formData.instruction_retrabalho = document.getElementById('instruction_retrabalho')?.value || '';
+              }
+              if (!disabledFieldNames.has('cause_rnc')) {
+                  formData.cause_rnc = document.getElementById('cause_rnc')?.value || '';
+              }
+              if (!disabledFieldNames.has('action_rnc')) {
+                  formData.action_rnc = document.getElementById('action_rnc')?.value || '';
+              }
+              
+              // Valor/Custo
+              if (!disabledFieldNames.has('price')) {
+                  {
+                      const priceRaw = document.getElementById('price')?.value || '';
+                      const numeric = parseFloat(String(priceRaw).replace(/[^0-9,.-]/g,'').replace(/\.(?=\d{3})/g,'').replace(',', '.'));
+                      formData.price = isNaN(numeric) ? null : numeric;
+                  }
+                  formData.price_note = document.getElementById('price_note')?.value || '';
+              }
+              
+              {% else %}
+              // Modo CRIAÇÃO: coletar todos os campos normalmente
+              formData.title = document.getElementById('title')?.value ?? {{ (rnc.title or "") | tojson }};
+              formData.description = document.getElementById('description')?.value ?? {{ (rnc.description or "") | tojson }};
+              formData.equipment = document.getElementById('equipment')?.value ?? {{ (rnc.equipment or "") | tojson }};
+              formData.client = document.getElementById('client')?.value ?? {{ (rnc.client or "") | tojson }};
+              formData.rnc_number = document.getElementById('rnc_number')?.value || {{ rnc.rnc_number | tojson }};
+              formData.mp = document.getElementById('mp')?.value || '';
+              formData.revision = document.getElementById('revision')?.value || '';
+              formData.position = document.getElementById('position')?.value || '';
+              formData.cv = document.getElementById('cv')?.value || '';
+              formData.conjunto = document.getElementById('conjunto')?.value || '';
+              formData.modelo = document.getElementById('modelo')?.value || '';
+              formData.description_drawing = document.getElementById('description_drawing')?.value || '';
+              formData.quantity = document.getElementById('quantity')?.value || '';
+              formData.material = document.getElementById('material')?.value || '';
+              formData.purchase_order = document.getElementById('purchase_order')?.value || '';
+              formData.assigned_user_id = document.getElementById('assigned_user_id')?.value || '';
+              formData.responsavel = document.getElementById('responsavel')?.value || '';
+              formData.inspetor = document.getElementById('inspetor')?.value || '';
+              formData.area_responsavel = document.getElementById('area_responsavel')?.value || '';
+              formData.created_at = document.getElementById('created_at')?.value || '';
+              formData.instruction_retrabalho = document.getElementById('instruction_retrabalho')?.value || '';
+              formData.cause_rnc = document.getElementById('cause_rnc')?.value || '';
+              formData.action_rnc = document.getElementById('action_rnc')?.value || '';
+              {
+                  const priceRaw = document.getElementById('price')?.value || '';
+                  const numeric = parseFloat(String(priceRaw).replace(/[^0-9,.-]/g,'').replace(/\.(?=\d{3})/g,'').replace(',', '.'));
+                  formData.price = isNaN(numeric) ? null : numeric;
+              }
+              formData.price_note = document.getElementById('price_note')?.value || '';
+              {% endif %}
+  
+              {% if is_reply %}
+              // 🔒 ADICIONAR mapeamentos e detectar checkboxes/datas/assinaturas bloqueadas
+              try {
+                  const checkboxMap = {
+                      'usar': 'disposition_usar',
+                      'retrabalhar': 'disposition_retrabalhar',
+                      'rejeitar': 'disposition_rejeitar',
+                      'sucata': 'disposition_sucata',
+                      'devolver_estoque': 'disposition_devolver_estoque',
+                      'devolver_fornecedor': 'disposition_devolver_fornecedor',
+                      'aprovado': 'inspection_aprovado',
+                      'reprovado': 'inspection_reprovado'
+                  };
+                  
+                  const dateFieldMap = {
+                      'insp1': 'signature_inspection_date',
+                      'eng': 'signature_engineering_date',
+                      'insp2': 'signature_inspection2_date'
+                  };
+                  
+                  const signatureMap = {
+                      'nome_coluna1': 'signature_inspection_name',
+                      'nome_coluna2': 'signature_engineering_name',
+                      'nome_coluna3': 'signature_inspection2_name'
+                  };
+                  
+                  // Adicionar checkboxes desabilitados ao Set
+                  Object.keys(checkboxMap).forEach(checkboxId => {
+                      const checkbox = document.getElementById(checkboxId);
+                      if (checkbox && checkbox.disabled) {
+                          disabledFieldNames.add(checkboxMap[checkboxId]);
+                      }
+                  });
+  
+                  // Se o campo de preço estiver bloqueado/disabled, desabilitar o botão de adicionar valores
+                  try {
+                      const priceEl = document.getElementById('price');
+                      const addBtn = document.getElementById('addValoresBtn');
+                      if (priceEl && priceEl.disabled && addBtn) {
+                          addBtn.disabled = true;
+                          addBtn.style.opacity = '0.6';
+                          addBtn.style.cursor = 'not-allowed';
+                      }
+                  } catch (_) {}
+                  
+                  // Adicionar campos de data desabilitados ao Set
+                  Object.keys(dateFieldMap).forEach(prefix => {
+                      const d = document.getElementById(prefix + '_d');
+                      const m = document.getElementById(prefix + '_m');
+                      const y = document.getElementById(prefix + '_y');
+                      if ((d && d.disabled) || (m && m.disabled) || (y && y.disabled)) {
+                          disabledFieldNames.add(dateFieldMap[prefix]);
+                      }
+                  });
+                  
+                  // Adicionar assinaturas bloqueadas ao Set
+                  Object.keys(signatureMap).forEach(sigId => {
+                      const sigEl = document.getElementById(sigId);
+                      const parent = sigEl?.closest('div');
+                      if (parent && parent.style.cursor === 'not-allowed') {
+                          disabledFieldNames.add(signatureMap[sigId]);
+                      }
+                  });
+                  
+                  console.log('🔒 Total de campos bloqueados:', Array.from(disabledFieldNames));
+                  
+                  // ADICIONAR APENAS SE NÃO BLOQUEADOS
+                  
+                  // Assinaturas
+                  if (!disabledFieldNames.has('signature_inspection_name')) {
+                      formData.signature_inspection_name = document.getElementById('nome_coluna1')?.textContent || '';
+                  }
+                  if (!disabledFieldNames.has('signature_engineering_name')) {
+                      formData.signature_engineering_name = document.getElementById('nome_coluna2')?.textContent || '';
+                  }
+                  if (!disabledFieldNames.has('signature_inspection2_name')) {
+                      formData.signature_inspection2_name = document.getElementById('nome_coluna3')?.textContent || '';
+                  }
+                  
+                  // ✅ CORREÇÃO: Datas de assinatura só devem ser enviadas se NÃO estiverem bloqueadas
+                  // Campos bloqueados não devem ser enviados ao backend (o banco já tem os valores corretos)
+                  if (!disabledFieldNames.has('signature_inspection_date')) {
+                      formData.signature_inspection_date = [
+                          document.getElementById('insp1_d')?.value||'',
+                          document.getElementById('insp1_m')?.value||'',
+                          document.getElementById('insp1_y')?.value||''
+                      ].join('/');
+                  }
+                  
+                  if (!disabledFieldNames.has('signature_engineering_date')) {
+                      formData.signature_engineering_date = [
+                          document.getElementById('eng_d')?.value||'',
+                          document.getElementById('eng_m')?.value||'',
+                          document.getElementById('eng_y')?.value||''
+                      ].join('/');
+                  }
+                  
+                  if (!disabledFieldNames.has('signature_inspection2_date')) {
+                      formData.signature_inspection2_date = [
+                          document.getElementById('insp2_d')?.value||'',
+                          document.getElementById('insp2_m')?.value||'',
+                          document.getElementById('insp2_y')?.value||''
+                      ].join('/');
+                  }
+                  
+                  console.log('📅 Datas de assinatura enviadas:', {
+                      inspection: formData.signature_inspection_date || '(bloqueado - não enviado)',
+                      engineering: formData.signature_engineering_date || '(bloqueado - não enviado)',
+                      inspection2: formData.signature_inspection2_date || '(bloqueado - não enviado)'
+                  });
+                  
+                  // Checkboxes de disposição
+                  if (!disabledFieldNames.has('disposition_usar')) {
+                      formData.disposition_usar = document.getElementById('usar')?.checked || false;
+                  }
+                  if (!disabledFieldNames.has('disposition_retrabalhar')) {
+                      formData.disposition_retrabalhar = document.getElementById('retrabalhar')?.checked || false;
+                  }
+                  if (!disabledFieldNames.has('disposition_rejeitar')) {
+                      formData.disposition_rejeitar = document.getElementById('rejeitar')?.checked || false;
+                  }
+                  if (!disabledFieldNames.has('disposition_sucata')) {
+                      formData.disposition_sucata = document.getElementById('sucata')?.checked || false;
+                  }
+                  if (!disabledFieldNames.has('disposition_devolver_estoque')) {
+                      formData.disposition_devolver_estoque = document.getElementById('devolver_estoque')?.checked || false;
+                  }
+                  if (!disabledFieldNames.has('disposition_devolver_fornecedor')) {
+                      formData.disposition_devolver_fornecedor = document.getElementById('devolver_fornecedor')?.checked || false;
+                  }
+                  
+                  // Inspeção do retrabalho
+                  if (!disabledFieldNames.has('inspection_aprovado')) {
+                      formData.inspection_aprovado = document.getElementById('aprovado')?.checked || false;
+                  }
+                  if (!disabledFieldNames.has('inspection_reprovado')) {
+                      formData.inspection_reprovado = document.getElementById('reprovado')?.checked || false;
+                  }
+                  if (!disabledFieldNames.has('inspection_ver_rnc')) {
+                      formData.inspection_ver_rnc = document.getElementById('ver_rnc_input')?.value || '';
+                  }
+                  
+                  // Status
+                  if (!disabledFieldNames.has('status')) {
+                      formData.status = 'Pendente';
+                      console.log('✅ Status definido como Pendente (campo permitido)');
+                  } else {
+                      console.log('⚠️  Status NÃO adicionado (campo bloqueado)');
+                  }
+                  
+                  console.log('✅ Payload final (apenas campos permitidos):', formData);
+                  
+              } catch(e) {
+                  console.error('❌ Erro ao filtrar campos bloqueados:', e);
+              }
+              {% else %}
+              // Modo criação - enviar todos os campos normalmente
+              formData.signature_inspection_name = document.getElementById('nome_coluna1')?.textContent || '';
+

@@ -1200,7 +1200,36 @@
         .btn-reply {
             background: linear-gradient(135deg, #dc3545, #b21f35);
             color: #fff;
+            position: relative;
         }
+        
+        /* Ícones nos botões */
+        .btn-view::before {
+            content: '';
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-right: 0;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z'/%3E%3C/svg%3E");
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            vertical-align: middle;
+        }
+        
+        .btn-chat::before {
+            content: '';
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-right: 0;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm1-13h-2v6h2V7zm0 8h-2v2h2v-2z'/%3E%3C/svg%3E");
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            vertical-align: middle;
+        }
+        
         .btn-view:hover,
         .btn-chat:hover,
         .btn-edit:hover,
@@ -1653,10 +1682,14 @@
                             align-items: center;
                             justify-content: center;
                             color: white;
-                            font-size: 18px;
+                            font-size: 20px;
                             box-shadow: 0 2px 10px rgba(255,193,7,0.3);
                             transition: all 0.3s ease;
-                        "></div>
+                        " title="Notificações">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="white">
+                                <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>
+                            </svg>
+                        </div>
                         <div id="notificationBadge" class="notification-badge" style="display: none;">0</div>
                     </div>
                     
@@ -2134,6 +2167,59 @@
                                 Cancelar
                             </button>
                             <button id="confirmModalConfirm" class="action-btn btn-primary" style="padding: 12px 28px; border-radius: 10px; font-weight: 700; font-size: 14px; transition: all 0.2s; background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(37,99,235,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px rgba(37,99,235,0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(37,99,235,0.3)'">
+                                Confirmar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal de Renumeração de RNC -->
+                <div id="renumberModal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 6000; align-items: center; justify-content: center;">
+                    <div class="modal-content" style="max-width: 500px; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.3); background: white; animation: modalFadeIn 0.3s ease-out;">
+                        <div class="modal-header" style="background: linear-gradient(135deg, #ff9800, #f57c00); padding: 25px; border-bottom: none; display: flex; align-items: center; gap: 15px;">
+                            <div style="background: rgba(255,255,255,0.2); width: 50px; height: 50px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 28px;">
+                                🔢
+                            </div>
+                            <h2 class="modal-title" style="margin: 0; font-size: 22px; color: white; font-weight: 700;">
+                                Renumerar RNC
+                            </h2>
+                        </div>
+                        
+                        <div class="modal-body" style="padding: 30px;">
+                            <input type="hidden" id="renumberRncId">
+                            
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: #374151;">
+                                    Número Atual:
+                                </label>
+                                <div style="padding: 12px; background: #f3f4f6; border-radius: 8px; font-size: 16px; font-weight: 700; color: #1f2937;">
+                                    RNC-<span id="renumberCurrentNumber"></span>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label for="renumberNewNumber" style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: #374151;">
+                                    Novo Número: <span style="color: #ef4444;">*</span>
+                                </label>
+                                <input 
+                                    type="text" 
+                                    id="renumberNewNumber" 
+                                    placeholder="Digite o novo número (somente dígitos)"
+                                    style="width: 100%; padding: 12px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 15px; transition: border-color 0.2s;"
+                                    onfocus="this.style.borderColor='#ff9800'"
+                                    onblur="this.style.borderColor='#d1d5db'"
+                                >
+                                <p style="margin: 8px 0 0 0; font-size: 12px; color: #6b7280;">
+                                    ⚠️ Esta ação irá alterar permanentemente o número da RNC
+                                </p>
+                            </div>
+                        </div>
+                        
+                        <div class="modal-actions" style="padding: 20px 30px; background: #f9fafb; border-top: 1px solid #e5e7eb; gap: 12px; display: flex; justify-content: flex-end;">
+                            <button onclick="closeRenumberModal()" class="action-btn btn-secondary" style="padding: 12px 24px; border-radius: 10px; font-weight: 600; font-size: 14px; transition: all 0.2s; background: #6b7280; color: white; border: none; cursor: pointer;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#6b7280'">
+                                Cancelar
+                            </button>
+                            <button onclick="submitRenumber()" class="action-btn btn-primary" style="padding: 12px 28px; border-radius: 10px; font-weight: 700; font-size: 14px; transition: all 0.2s; background: linear-gradient(135deg, #ff9800, #f57c00); color: white; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(245,124,0,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px rgba(245,124,0,0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(245,124,0,0.3)'">
                                 Confirmar
                             </button>
                         </div>
@@ -3452,20 +3538,32 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                     <div class="rnc-details">
 
                         <div class="detail-item">
-                            <div class="icon">�</div>
+                            <div class="icon">📅</div>
                             <span>${rnc.created_at ? new Date(rnc.created_at).toLocaleDateString('pt-BR') : 'N/A'}</span>
                         </div>
                         <div class="detail-item">
-                            <div class="icon">�</div>
+                            <div class="icon">🔧</div>
                             <span>${rnc.equipment || 'N/A'}</span>
                         </div>
+                        ${rnc.drawing ? `
                         <div class="detail-item">
-                            <div class="icon"></div>
+                            <div class="icon">📐</div>
+                            <span>${rnc.drawing}</span>
+                        </div>
+                        ` : ''}
+                        <div class="detail-item">
+                            <div class="icon">🏢</div>
                             <span>${rnc.client || 'N/A'}</span>
                         </div>
                         <div class="detail-item">
-                            <div class="icon"></div>
-                            <span>${rnc.responsavel || rnc.assigned_user_name || rnc.user_name || 'Sistema'}</span>
+                            <div class="icon">👤</div>
+                            <span>${(() => {
+                                // Prioridade: assigned_user_name > user_name > responsavel (se não for número)
+                                if (rnc.assigned_user_name) return rnc.assigned_user_name;
+                                if (rnc.user_name && rnc.user_name !== 'N/A') return rnc.user_name;
+                                if (rnc.responsavel && rnc.responsavel !== 'N/A' && isNaN(rnc.responsavel)) return rnc.responsavel;
+                                return 'Sistema';
+                            })()}</span>
                         </div>
                     </div>
                     
@@ -3559,6 +3657,7 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                     <a href="/rnc/${rnc.id}/chat" class="action-btn btn-chat"> Chat</a>
                     <a href="/rnc/${rnc.id}/reply" class="action-btn btn-reply"> Responder</a>
                     <button onclick="finalizeRNC(${rnc.id})" class="action-btn btn-finalize"> Finalizar</button>
+                    <button onclick="openRenumberModal(${rnc.id}, '${rnc.rnc_number}')" class="action-btn btn-renumber" style="background: #ff9800;">  Renumerar</button>
                     <button onclick="deleteRNC(${rnc.id})" class="action-btn btn-delete"> Excluir</button>
                 `;
             }
@@ -3694,6 +3793,78 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                 
                 // Em caso de erro de rede, recarregar para mostrar estado real
                 loadRNCs(currentTab);
+            }
+        }
+        
+        // ============================================
+        // FUNÇÕES DE RENUMERAÇÃO (SOMENTE ADMIN)
+        // ============================================
+        function openRenumberModal(rncId, currentNumber) {
+            const modal = document.getElementById('renumberModal');
+            const rncIdField = document.getElementById('renumberRncId');
+            const currentNumberField = document.getElementById('renumberCurrentNumber');
+            const newNumberField = document.getElementById('renumberNewNumber');
+            
+            if (!modal || !rncIdField || !currentNumberField || !newNumberField) {
+                alert('Erro: Modal de renumeração não encontrado');
+                return;
+            }
+            
+            // Remover prefixo "RNC-" se existir
+            const cleanNumber = currentNumber.replace(/^RNC-/i, '');
+            
+            rncIdField.value = rncId;
+            currentNumberField.textContent = cleanNumber;
+            newNumberField.value = '';
+            newNumberField.focus();
+            
+            modal.style.display = 'flex';
+            
+            console.log(`📝 Modal de renumeração aberto para RNC ${rncId} (número atual: ${cleanNumber})`);
+        }
+        
+        function closeRenumberModal() {
+            const modal = document.getElementById('renumberModal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+        }
+        
+        async function submitRenumber() {
+            const rncId = document.getElementById('renumberRncId').value;
+            const newNumber = document.getElementById('renumberNewNumber').value.trim();
+            
+            if (!newNumber) {
+                alert('Por favor, informe o novo número');
+                return;
+            }
+            
+            if (!/^\d+$/.test(newNumber)) {
+                alert('O número deve conter apenas dígitos');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/rnc/${rncId}/renumber`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ new_number: newNumber })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(`✅ RNC renumerada: ${data.old_number} → ${data.new_number}`, 'success');
+                    closeRenumberModal();
+                    loadRNCs(currentTab); // Recarregar lista
+                } else {
+                    alert('❌ Erro ao renumerar: ' + data.message);
+                }
+            } catch (error) {
+                console.error('Erro ao renumerar RNC:', error);
+                alert('❌ Erro de conexão ao renumerar RNC');
             }
         }
         
@@ -4455,8 +4626,11 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
             }
         }
         
-        // Tocar som de notificação (estilo Minecraft XP)
+        // Tocar som de notificação (estilo Minecraft XP) - DESABILITADO
         function playNotificationSound() {
+            // SOM DESABILITADO POR SOLICITAÇÃO DO USUÁRIO
+            return;
+            /*
             try {
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
@@ -4492,28 +4666,42 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
             } catch (error) {
                 console.error(' Erro ao tocar som:', error);
             }
+            */
         }
         
-        // Polling automático para notificações
+        // Polling automático para notificações - COM PROTEÇÃO ANTI-LOOP
+        let isPollingNotifications = false; // Flag para evitar chamadas simultâneas
+        
         function startNotificationPolling() {
-            // Verificar novas notificações a cada 3 segundos (reduzido de 1s para evitar rate limit)
+            // Verificar novas notificações a cada 10 segundos (aumentado para evitar loop)
             notificationPollingInterval = setInterval(async () => {
+                // Se já está processando, pular esta iteração
+                if (isPollingNotifications) {
+                    console.warn('⚠️ Polling de notificações já em andamento, pulando...');
+                    return;
+                }
+                
+                isPollingNotifications = true;
+                
                 try {
                     const response = await fetch('/api/notifications/unread');
                     
                     // Verificar se resposta é OK antes de parsear JSON
                     if (!response.ok) {
                         if (response.status === 429) {
-                            console.warn(' Rate limit atingido para notificações, aguardando...');
+                            console.warn('⚠️ Rate limit atingido para notificações, aguardando...');
+                            isPollingNotifications = false;
                             return; // Pular esta verificação
                         }
                         console.error(`Erro HTTP ${response.status} ao verificar notificações`);
+                        isPollingNotifications = false;
                         return;
                     }
                     
                     const contentType = response.headers.get('content-type');
                     if (!contentType || !contentType.includes('application/json')) {
                         console.error('Resposta não é JSON:', await response.text());
+                        isPollingNotifications = false;
                         return;
                     }
                     
@@ -4524,15 +4712,18 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                         
                         // Se há novas notificações
                         if (newCount > lastNotificationCount) {
-                            const newNotifications = data.notifications.slice(0, newCount - lastNotificationCount);
+                            const diff = newCount - lastNotificationCount;
+                            
+                            // LIMITAR: Máximo 3 notificações por vez para evitar spam
+                            const newNotifications = data.notifications.slice(0, Math.min(diff, 3));
                             
                             // Adicionar novas notificações
                             newNotifications.forEach(notification => {
                                 notifications.unshift(notification);
                                 notificationCount++;
                                 
-                                // Tocar som
-                                playNotificationSound();
+                                // SOM DESABILITADO
+                                // playNotificationSound();
                                 
                                 // Mostrar notificação toast
                                 showToastNotification(notification);
@@ -4543,6 +4734,8 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                             
                             renderNotifications();
                             updateNotificationBadge();
+                            
+                            console.log(`✅ ${newNotifications.length} nova(s) notificação(ões) processada(s)`);
                         }
                         
                         lastNotificationCount = newCount;
@@ -4550,29 +4743,40 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                 } catch (error) {
                     // Silenciar erros de parsing para não poluir o console
                     if (error instanceof SyntaxError) {
-                        console.warn(' Resposta inválida do servidor (provavelmente rate limit), ignorando...');
+                        console.warn('⚠️ Resposta inválida do servidor (provavelmente rate limit), ignorando...');
                     } else {
                         console.error('Erro ao verificar notificações:', error);
                     }
+                } finally {
+                    isPollingNotifications = false;
                 }
-            }, 3000); // 3 segundos (aumentado de 1s para reduzir carga)
+            }, 10000); // 10 segundos (aumentado de 3s para evitar loops e sobrecarga)
         }
         
-        // Atualização automática das RNCs a cada 5 segundos (funciona em segundo plano)
+        // Atualização automática das RNCs a cada 10 segundos (funciona em segundo plano)
         let autoUpdateRNCsInterval = null;
         let lastRNCCounts = { active: 0, finalized: 0, engenharia: 0 };
+        let isUpdatingRNCs = false; // Flag para evitar chamadas simultâneas
         
         function startAutoUpdateRNCs() {
             // Limpar intervalo anterior se existir
             if (autoUpdateRNCsInterval) {
-                console.log(' Limpando intervalo anterior de atualização');
+                console.log('🔄 Limpando intervalo anterior de atualização');
                 clearInterval(autoUpdateRNCsInterval);
             }
             
-            console.log(' Iniciando atualização automática de RNCs a cada 5 segundos (com notificações Windows)...');
+            console.log('🔄 Iniciando atualização automática de RNCs a cada 10 segundos...');
             
-            // Atualizar a cada 5 segundos (5000ms) - FUNCIONA MESMO EM SEGUNDO PLANO
+            // Atualizar a cada 10 segundos (10000ms) - AUMENTADO PARA EVITAR SOBRECARGA
             autoUpdateRNCsInterval = setInterval(async () => {
+                // Se já está atualizando, pular
+                if (isUpdatingRNCs) {
+                    console.warn('⚠️ Atualização de RNCs já em andamento, pulando...');
+                    return;
+                }
+                
+                isUpdatingRNCs = true;
+                
                 try {
                     // Buscar dados atualizados da aba atual
                     const response = await fetch(`/api/rnc/list?tab=${currentTab}`);
@@ -4585,7 +4789,7 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                         
                         // Se houver mudança no número de RNCs, atualizar
                         if (currentCount !== previousCount) {
-                            console.log(` Auto-update [${currentTab}]: ${previousCount} → ${currentCount} RNCs`);
+                            console.log(`📊 Auto-update [${currentTab}]: ${previousCount} → ${currentCount} RNCs`);
                             
                             // Atualizar dados
                             rncsData[currentTab] = newRNCs;
@@ -4600,53 +4804,38 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                             // Salvar no cache
                             saveDashboardCache({ user: null, rncs: rncsData });
                             
-                            //  Se houver NOVAS RNCs (não quando diminuir)
+                            // 🔕 SOM DESABILITADO - Não tocar som em auto-update
+                            // 🔕 NOTIFICAÇÕES REDUZIDAS - Apenas para mudanças significativas
+                            
+                            // Apenas log no console, sem notificações visuais/sonoras
                             if (currentCount > previousCount) {
                                 const diff = currentCount - previousCount;
-                                
-                                // NOTIFICAÇÃO NATIVA DO WINDOWS (funciona em segundo plano)
-                                const newestRNCs = newRNCs.slice(0, diff);
-                                newestRNCs.forEach(rnc => {
-                                    showBrowserNotification({
-                                        id: rnc.id,
-                                        rnc_id: rnc.id,
-                                        title: ' Nova RNC Criada!',
-                                        message: `RNC #${rnc.rnc_number || rnc.id}\n${rnc.title || 'Sem título'}\nResponsável: ${rnc.assigned_user_name || 'Não atribuído'}`
-                                    });
-                                });
-                                
-                                // Tocar som (funciona em segundo plano)
-                                if (window.SoundSystem) {
-                                    window.SoundSystem.playNotification();
-                                } else {
-                                    playNotificationSound();
-                                }
-                                
-                                // Mostrar toast apenas se aba estiver visível
-                                if (!document.hidden) {
-                                    showToastMessage(` ${diff} nova${diff > 1 ? 's' : ''} RNC${diff > 1 ? 's' : ''} detectada${diff > 1 ? 's' : ''}!`, 'success');
-                                }
-                                
-                                console.log(` ${diff} notificação(ões) do Windows enviada(s)`);
+                                console.log(`✅ ${diff} nova(s) RNC(s) detectada(s) [${currentTab}]`);
+                            } else if (currentCount < previousCount) {
+                                const diff = previousCount - currentCount;
+                                console.log(`📉 ${diff} RNC(s) removida(s)/finalizada(s) [${currentTab}]`);
                             }
                         }
                     }
                 } catch (error) {
                     // Silenciar erros de rede para não poluir console
                     if (!error.message.includes('Failed to fetch')) {
-                        console.warn(' Erro na atualização automática:', error.message);
+                        console.warn('⚠️ Erro na atualização automática:', error.message);
                     }
+                } finally {
+                    isUpdatingRNCs = false;
                 }
-            }, 5000); // 5 segundos - CONTINUA EXECUTANDO EM SEGUNDO PLANO
+            }, 10000); // 10 segundos - AUMENTADO PARA EVITAR SOBRECARGA
             
-            console.log(' Atualização automática de RNCs ativada a cada 5 segundos (funciona em segundo plano)');
+            console.log('✅ Atualização automática de RNCs ativada a cada 10 segundos');
         }
         
         function stopAutoUpdateRNCs() {
             if (autoUpdateRNCsInterval) {
                 clearInterval(autoUpdateRNCsInterval);
                 autoUpdateRNCsInterval = null;
-                console.log(' Atualização automática de RNCs pausada');
+                isUpdatingRNCs = false;
+                console.log('⏸️ Atualização automática de RNCs pausada');
             }
         }
         

@@ -1432,6 +1432,62 @@
 </head>
 <body>
     <div class="container">
+        <script>
+            // Prevent ReferenceError if onclick handlers are triggered before full scripts load
+            window.preencherAssinatura = window.preencherAssinatura || function(elemento){
+                console.warn('preencherAssinatura chamado antes da inicialização completa (new_rnc)', elemento);
+                // Não bloquear a UI; o handler real irá sobrescrever este stub quando carregado
+                return;
+            };
+
+            // new_rnc uses criarRNC instead of salvarAlteracoes, but keep a generic safe save
+            window.salvarAlteracoes = window.salvarAlteracoes || function(){
+                console.warn('salvarAlteracoes chamado antes da inicialização completa (new_rnc)');
+                // Não bloquear a UI; o handler real irá sobrescrever este stub quando carregado
+                return;
+            };
+            try { window.preencherAssinatura.__isStub = true; } catch(e){}
+            try { window.salvarAlteracoes.__isStub = true; } catch(e){}
+
+            window.callWhenReady = window.callWhenReady || function(name, args, timeout){
+                args = args || [];
+                timeout = typeof timeout === 'number' ? timeout : 3000;
+                const start = Date.now();
+                const tryCall = function(){
+                    const fn = window[name];
+                    if (typeof fn === 'function' && !fn.__isStub) {
+                        try { fn.apply(null, args); } catch(e){ console.error('Erro ao executar', name, e); }
+                        return;
+                    }
+                    if (Date.now() - start < timeout) {
+                        setTimeout(tryCall, 50);
+                    } else {
+                        console.warn(name + ' não ficou pronto dentro do timeout');
+                        try { if (typeof mostrarNotificacao === 'function') mostrarNotificacao('Aguarde alguns instantes; a página ainda está carregando.', 'error'); } catch(e){}
+                    }
+                };
+                tryCall();
+            };
+
+            document.addEventListener('click', function(ev){
+                try {
+                    const el = ev.target;
+                    const sig = el && el.closest ? el.closest('[id^="assinatura_coluna"]') : null;
+                    if (sig) {
+                        ev.stopImmediatePropagation(); ev.preventDefault();
+                        window.callWhenReady('preencherAssinatura', [sig], 3000);
+                        return;
+                    }
+
+                    const btn = el && (el.id === 'btnSalvar' ? el : (el.closest ? el.closest('#btnSalvar') : null));
+                    if (btn) {
+                        ev.stopImmediatePropagation(); ev.preventDefault();
+                        window.callWhenReady('salvarAlteracoes', [], 3000);
+                        return;
+                    }
+                } catch(e) {}
+            }, true);
+        </script>
         <!-- Banner de modo de criação -->
         <div class="create-mode-banner no-print">
             CRIAÇÃO DE NOVA RNC - Sistema IPPEL
@@ -1845,9 +1901,9 @@
                     <div id="nome_coluna1" style="margin-bottom: 20px; min-height: 18px;">NOME</div>
                     <div style="border-top: 1px solid #333; padding-top: 6px; font-size: 9px; color: #555;">VISTO - Qualidade</div>
                 </div>
-                <div id="assinatura_coluna2" style="width: 33.33%; padding: 12px; text-align: center; font-size: 10px; font-weight: 600; cursor: pointer; border-right: 1px solid #000;" onclick="preencherAssinatura(this)">
-                    <div id="nome_coluna2" style="margin-bottom: 20px; min-height: 18px;">NOME</div>
-                    <div style="border-top: 1px solid #333; padding-top: 6px; font-size: 9px; color: #555;">VISTO - Gerente do Setor</div>
+                <div id="assinatura_coluna2" style="width: 33.33%; padding: 12px; text-align: center; font-size: 10px; font-weight: 600; cursor: not-allowed; border-right: 1px solid #000; background: #f8f9fa; opacity: 0.7;" title="Este campo deve ser preenchido APENAS PELO GERENTE do setor, clicando aqui manualmente">
+                    <div id="nome_coluna2" style="margin-bottom: 20px; min-height: 18px; color: #6c757d;">NOME</div>
+                    <div style="border-top: 1px solid #333; padding-top: 6px; font-size: 9px; color: #555;">VISTO - Gerente do Setor ⚠️ MANUAL</div>
                 </div>
                 <div id="assinatura_coluna3" style="width: 33.33%; padding: 12px; text-align: center; font-size: 10px; font-weight: 600; cursor: pointer;" onclick="preencherAssinatura(this)">
                     <div id="nome_coluna3" style="margin-bottom: 20px; min-height: 18px;">NOME</div>
@@ -2636,6 +2692,25 @@
                             console.log(` ✓ Data de emissão preenchida: ${dataAtual}`);
                         }
                         
+                        // GARANTIR que o campo "VISTO - Gerente do Setor" (nome_coluna2) permaneça VAZIO
+                        // Este campo deve ser preenchido MANUALMENTE pelo gerente, não automaticamente
+                        const nomeColuna2 = document.getElementById('nome_coluna2');
+                        if (nomeColuna2) {
+                            nomeColuna2.textContent = 'NOME';
+                            console.log(` ℹ️ Campo "VISTO - Gerente do Setor" mantido vazio (preenchimento manual obrigatório)`);
+                        }
+                        
+                        // Limpar também a data correspondente ao VISTO - Gerente do Setor
+                        const engD = document.getElementById('eng_d');
+                        const engM = document.getElementById('eng_m');
+                        const engY = document.getElementById('eng_y');
+                        if (engD && engM && engY) {
+                            engD.value = '';
+                            engM.value = '';
+                            engY.value = '';
+                            console.log(` ℹ️ Data do "VISTO - Gerente do Setor" limpa (será preenchida manualmente)`);
+                        }
+                        
                         // NÃO preencher "Assinatura Causador" - deve ficar em branco até o usuário selecionar no dropdown
                         if (assinaturaLiderInput) {
                             assinaturaLiderInput.value = '';
@@ -3049,6 +3124,36 @@
         document.addEventListener('DOMContentLoaded', function() {
             console.log(' Página carregada, iniciando carregamentos...');
             
+            // GARANTIR que o campo "VISTO - Gerente do Setor" SEMPRE comece vazio
+            // Este campo NÃO deve ser preenchido automaticamente em nenhuma circunstância
+            const nomeColuna2 = document.getElementById('nome_coluna2');
+            if (nomeColuna2) {
+                nomeColuna2.textContent = 'NOME';
+                console.log('✓ Campo "VISTO - Gerente do Setor" inicializado como vazio (preenchimento manual obrigatório)');
+            }
+            
+            // Limpar também a data do VISTO - Gerente do Setor
+            const engD = document.getElementById('eng_d');
+            const engM = document.getElementById('eng_m');
+            const engY = document.getElementById('eng_y');
+            if (engD && engM && engY) {
+                engD.value = '';
+                engM.value = '';
+                engY.value = '';
+                console.log('✓ Data do "VISTO - Gerente do Setor" inicializada como vazia');
+            }
+            
+            // PREENCHER DATA AUTOMATICAMENTE
+            const dataEmissaoField = document.getElementById('data_emissao');
+            if (dataEmissaoField) {
+                const today = new Date();
+                const day = String(today.getDate()).padStart(2, '0');
+                const month = String(today.getMonth() + 1).padStart(2, '0');
+                const year = today.getFullYear();
+                dataEmissaoField.value = `${day}/${month}/${year}`;
+                console.log(` Data de emissão preenchida automaticamente: ${dataEmissaoField.value}`);
+            }
+            
             // FORÇAR FONTE DE 12PX NOS TEXTAREAS DE DESCRIÇÃO E AUTO-RESIZE
             const textareaIds = ['description', 'instruction_retrabalho', 'cause_rnc', 'action_rnc'];
             textareaIds.forEach(id => {
@@ -3128,6 +3233,105 @@
                 assinaturaLiderInput.value = '';
                 console.log(' Campo "Assinatura Causador" inicializado vazio');
             }
+            
+            // PROTEÇÃO ADICIONAL: Monitorar e bloquear qualquer tentativa de preencher nome_coluna2 automaticamente
+            // Este observer garante que nome_coluna2 só pode ser preenchido pelo clique manual do usuário
+            const nomeColuna2Protection = document.getElementById('nome_coluna2');
+            const assinaturaColuna2 = document.getElementById('assinatura_coluna2');
+            
+            if (nomeColuna2Protection && assinaturaColuna2) {
+                let isGerenteClick = false;
+                
+                // SUBSTITUIR o comportamento de clique para exigir confirmação do GERENTE
+                assinaturaColuna2.onclick = null; // Remover onclick anterior
+                assinaturaColuna2.style.cursor = 'pointer';
+                assinaturaColuna2.style.background = 'white';
+                assinaturaColuna2.style.opacity = '1';
+                
+                assinaturaColuna2.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Confirmar que é o GERENTE do setor que está clicando
+                    const confirmacao = confirm(' ');
+                    
+                    if (confirmacao) {
+                        isGerenteClick = true;
+                        console.log('✓ Gerente confirmou - preenchendo assinatura');
+                        
+                        // Chamar a função original de preenchimento
+                        fetch('/api/user/info')
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success && data.user) {
+                                    const userName = data.user.name || 'USUÁRIO';
+                                    nomeColuna2Protection.textContent = userName;
+                                    
+                                    // Preencher data
+                                    const hoje = new Date();
+                                    const dia = String(hoje.getDate()).padStart(2, '0');
+                                    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+                                    const ano = String(hoje.getFullYear());
+                                    
+                                    const engD = document.getElementById('eng_d');
+                                    const engM = document.getElementById('eng_m');
+                                    const engY = document.getElementById('eng_y');
+                                    
+                                    if (engD && engM && engY) {
+                                        engD.value = dia;
+                                        engM.value = mes;
+                                        engY.value = ano;
+                                    }
+                                    
+                                    if (typeof mostrarNotificacao === 'function') {
+                                        mostrarNotificacao('✓ Assinatura do gerente registrada!', 'success');
+                                    }
+                                    
+                                    isGerenteClick = false;
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Erro ao buscar informações do usuário:', error);
+                                isGerenteClick = false;
+                            });
+                    } else {
+                        console.log('✗ Usuário cancelou - não é o gerente');
+                        if (typeof mostrarNotificacao === 'function') {
+                            mostrarNotificacao('❌ Assinatura cancelada - apenas o gerente pode assinar', 'warning');
+                        }
+                    }
+                });
+                
+                // Observer que SEMPRE reverte mudanças automáticas
+                if (window.MutationObserver) {
+                    const protectionObserver = new MutationObserver(function(mutations) {
+                        mutations.forEach(function(mutation) {
+                            if (!isGerenteClick && nomeColuna2Protection.textContent !== 'NOME') {
+                                console.warn('🚫 BLOQUEADO: Tentativa automática detectada e revertida');
+                                nomeColuna2Protection.textContent = 'NOME';
+                                
+                                // Limpar data também
+                                const engD = document.getElementById('eng_d');
+                                const engM = document.getElementById('eng_m');
+                                const engY = document.getElementById('eng_y');
+                                if (engD && engM && engY) {
+                                    engD.value = '';
+                                    engM.value = '';
+                                    engY.value = '';
+                                }
+                            }
+                        });
+                    });
+                    
+                    protectionObserver.observe(nomeColuna2Protection, {
+                        characterData: true,
+                        subtree: true,
+                        childList: true
+                    });
+                    
+                    console.log('🛡️ Proteção MÁXIMA ativa para "VISTO - Gerente do Setor"');
+                }
+            }
         });
     </script>
     <script>
@@ -3182,10 +3386,10 @@
         document.addEventListener('DOMContentLoaded', function() {
             const cvInput = document.querySelector('[data-field="cv"]');
             if (cvInput) {
-                cvInput.setAttribute('maxlength', '11');
+                cvInput.setAttribute('maxlength', '20');
                 cvInput.addEventListener('input', function() {
-                    // Permite apenas números e limita a 11 dígitos
-                    this.value = this.value.replace(/\D/g, '').slice(0, 11);
+                    // Permite números e letras (alfanumérico) e limita a 20 caracteres
+                    this.value = this.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 20).toUpperCase();
                 });
             }
         });
@@ -3827,10 +4031,10 @@
         document.addEventListener('DOMContentLoaded', function() {
             const cvInput = document.querySelector('[data-field="cv"]');
             if (cvInput) {
-                cvInput.setAttribute('maxlength', '11');
+                cvInput.setAttribute('maxlength', '20');
                 cvInput.addEventListener('input', function() {
-                    // Permite apenas números e limita a 11 dígitos
-                    this.value = this.value.replace(/\D/g, '').slice(0, 11);
+                    // Permite números e letras (alfanumérico) e limita a 20 caracteres
+                    this.value = this.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 20).toUpperCase();
                 });
             }
         });

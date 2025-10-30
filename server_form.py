@@ -1055,6 +1055,9 @@ def performance_monitor():
 def init_database():
     """Inicializa o banco de dados: tabelas, colunas e usuário admin padrão."""
     conn = sqlite3.connect(DB_PATH)
+    # CRITICAL: Configure UTF-8 encoding to handle accents correctly
+    conn.text_factory = str
+    conn.execute('PRAGMA encoding="UTF-8"')
     cursor = conn.cursor()
     # PRAGMAs de performance
     cursor.execute('PRAGMA journal_mode=WAL')
@@ -1506,6 +1509,8 @@ def get_user_by_id(user_id):
 def get_all_users():
     """Buscar todos os usuários ativos"""
     conn = sqlite3.connect(DB_PATH)
+    conn.text_factory = str
+    conn.execute('PRAGMA encoding="UTF-8"')
     cursor = conn.cursor()
     cursor.execute('''
         SELECT u.id, u.name, u.email, u.department, u.role, u.permissions, u.created_at, g.name as group_name
@@ -1521,6 +1526,8 @@ def get_all_users():
 def create_user(name, email, password, department, role, permissions):
     """Criar novo usuário"""
     conn = sqlite3.connect(DB_PATH)
+    conn.text_factory = str
+    conn.execute('PRAGMA encoding="UTF-8"')
     cursor = conn.cursor()
     
     password_hash = generate_password_hash(password)
@@ -1572,6 +1579,8 @@ def create_user(name, email, password, department, role, permissions):
 def update_user(user_id, name, email, department, role, permissions, is_active):
     """Atualizar usuário"""
     conn = sqlite3.connect(DB_PATH)
+    conn.text_factory = str
+    conn.execute('PRAGMA encoding="UTF-8"')
     cursor = conn.cursor()
     
     import json
@@ -1613,6 +1622,8 @@ def delete_user(user_id):
 def restore_user(user_id: int) -> bool:
     """Reativar usuário previamente desativado."""
     conn = sqlite3.connect(DB_PATH)
+    conn.text_factory = str
+    conn.execute('PRAGMA encoding="UTF-8"')
     cursor = conn.cursor()
     cursor.execute('UPDATE users SET is_active = 1 WHERE id = ?', (user_id,))
     conn.commit()

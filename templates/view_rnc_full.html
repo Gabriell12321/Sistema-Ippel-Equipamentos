@@ -467,7 +467,7 @@
             /* Configuração da página */
             @page {
                 size: A4 portrait;
-                margin: 20mm 5mm 3mm 5mm;
+                margin: 3mm 8mm 3mm 8mm;
             }
             
             body {
@@ -484,6 +484,7 @@
                 border: none !important;
                 border-top: none !important;
                 padding: 0 !important;
+                padding-bottom: 0 !important;
                 margin: 0 !important;
                 width: 100%;
                 height: auto;
@@ -492,17 +493,33 @@
                 background: white !important;
             }
             
-            /* ===== HEADER E LOGO - OCULTAR NA IMPRESSÃO ===== */
+            /* ===== HEADER E LOGOS - EXIBIR CENTRALIZADAS NA IMPRESSÃO ===== */
             .header {
-                display: none !important;
+                display: block !important;
+                page-break-after: avoid !important;
+                margin-bottom: 1px !important;
+                margin-top: 0 !important;
+                text-align: center !important;
             }
             
             .logos {
-                display: none !important;
+                display: flex !important;
+                justify-content: center !important;
+                align-items: center !important;
+                gap: 60px !important;
+                padding: 3px 0 !important;
+                margin: 0 !important;
+                page-break-after: avoid !important;
             }
             
-            .logo-ippel img {
-                display: none !important;
+            .logo-ippel img,
+            .logo-rnc img {
+                display: block !important;
+                width: 70px !important;
+                height: 70px !important;
+                object-fit: contain !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
             }
             
             /* ===== TÍTULOS - SEM MARGEM ===== */
@@ -512,8 +529,8 @@
             }
             
             .main-title {
-                font-size: 13px !important;
-                margin-bottom: 1px !important;
+                font-size: 14px !important;
+                margin-bottom: 0 !important;
                 margin-top: 0 !important;
                 padding: 0 !important;
                 color: #000 !important;
@@ -525,30 +542,30 @@
             
             .subtitle {
                 font-size: 9px !important;
-                margin: 1px 0 !important;
+                margin: 0 !important;
                 padding: 0 !important;
-                line-height: 1.1 !important;
+                line-height: 1.0 !important;
                 color: #333 !important;
             }
             
             .form-code {
                 font-size: 8px !important;
-                margin: 1px 0 !important;
+                margin: 0 !important;
                 padding: 0 !important;
-                line-height: 1.1 !important;
+                line-height: 1.0 !important;
                 color: #333 !important;
             }
             
             .rnc-number {
-                margin: 2px 0 !important;
-                padding: 3px 6px !important;
+                margin: 1px 0 !important;
+                padding: 2px 5px !important;
                 border-radius: 0 !important;
                 text-align: center !important;
-                font-size: 10px !important;
+                font-size: 11px !important;
                 font-weight: bold !important;
                 background: #f5f5f5 !important;
                 border: 1px solid #333 !important;
-                line-height: 1.1 !important;
+                line-height: 1.0 !important;
                 color: #000 !important;
             }
             
@@ -559,7 +576,7 @@
             
             /* ===== SEÇÕES - ESPAÇAMENTO COMPACTO ===== */
             div[style*="margin: 25px 0"] {
-                margin: 0 0 4px 0 !important;
+                margin: 0 0 2px 0 !important;
                 border: 1px solid #333 !important;
                 border-radius: 0 !important;
                 page-break-inside: avoid !important;
@@ -571,7 +588,7 @@
             div[style*="background: #6c757d"] {
                 background: #d0d0d0 !important;
                 color: #000 !important;
-                padding: 4px 6px !important;
+                padding: 3px 5px !important;
                 font-size: 9px !important;
                 font-weight: bold !important;
                 border: none !important;
@@ -585,7 +602,7 @@
             /* Padding das seções */
             div[style*="padding: 20px"],
             div[style*="padding: 15px"] {
-                padding: 4px 6px !important;
+                padding: 5px 6px !important;
                 background: #fff !important;
                 margin: 0 !important;
             }
@@ -606,16 +623,16 @@
             table td,
             table th {
                 border: 1px solid #666 !important;
-                padding: 3px 5px !important;
+                padding: 0px 2px !important;
                 color: #000 !important;
-                line-height: 1.3 !important;
-                height: auto !important;
-                min-height: auto !important;
+                line-height: 1.0 !important;
+                height: 12px !important;
+                min-height: 12px !important;
+                max-height: 12px !important;
                 vertical-align: middle !important;
-                white-space: pre-wrap !important;
-                word-wrap: break-word !important;
-                word-break: break-word !important;
-                overflow-wrap: break-word !important;
+                white-space: nowrap !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
                 max-width: 0 !important;
             }
             
@@ -623,35 +640,42 @@
                 background: #e8e8e8 !important;
                 font-weight: bold !important;
                 font-size: 7px !important;
-                padding: 3px 5px !important;
-                height: auto !important;
+                padding: 0px 2px !important;
+                height: 12px !important;
+                min-height: 12px !important;
+                max-height: 12px !important;
+                line-height: 1.0 !important;
                 color: #000 !important;
             }
             
             .field-value {
                 background: white !important;
-                font-size: 8px !important;
-                padding: 3px 5px !important;
+                font-size: 7px !important;
+                padding: 0px 2px !important;
+                height: 12px !important;
+                min-height: 12px !important;
+                max-height: 12px !important;
+                line-height: 1.0 !important;
                 color: #000 !important;
                 font-weight: normal !important;
-                white-space: pre-wrap !important;
-                word-wrap: break-word !important;
-                word-break: break-word !important;
-                overflow-wrap: break-word !important;
+                white-space: nowrap !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
             }
             
             .section-title {
                 background: #d0d0d0 !important;
                 color: #000 !important;
                 font-weight: bold !important;
-                font-size: 9px !important;
-                padding: 4px 6px !important;
+                font-size: 10px !important;
+                padding: 6px 10px !important;
                 border: none !important;
+                line-height: 1.4 !important;
             }
             
             .section-content {
-                padding: 10px 12px !important;
-                font-size: 8px !important;
+                padding: 12px 15px !important;
+                font-size: 11px !important;
                 color: #000 !important;
                 background: white !important;
                 min-height: 60px !important;
@@ -663,24 +687,30 @@
             }
             
             .section-content-large {
-                min-height: 120px !important;
-                padding: 12px 14px !important;
+                min-height: 90px !important;
+                padding: 15px 18px !important;
+                font-size: 11px !important;
+                line-height: 1.5 !important;
                 white-space: pre-wrap !important;
                 word-wrap: break-word !important;
                 word-break: break-word !important;
             }
             
             .section-content-medium {
-                min-height: 100px !important;
-                padding: 12px 14px !important;
+                min-height: 80px !important;
+                padding: 12px 15px !important;
+                font-size: 11px !important;
+                line-height: 1.5 !important;
                 white-space: pre-wrap !important;
                 word-wrap: break-word !important;
                 word-break: break-word !important;
             }
             
             .section-content-instruction {
-                min-height: 90px !important;
-                padding: 12px 14px !important;
+                min-height: 75px !important;
+                padding: 12px 15px !important;
+                font-size: 11px !important;
+                line-height: 1.5 !important;
                 white-space: pre-wrap !important;
                 word-wrap: break-word !important;
                 word-break: break-word !important;
@@ -695,16 +725,16 @@
             
             /* ===== CHECKBOXES ===== */
             input[type="checkbox"] {
-                width: 13px !important;
-                height: 13px !important;
-                margin: 0 6px 0 0 !important;
+                width: 16px !important;
+                height: 16px !important;
+                margin: 0 8px 0 0 !important;
                 -webkit-appearance: checkbox !important;
                 appearance: checkbox !important;
             }
             
             /* ===== SEÇÃO DE ASSINATURAS ===== */
             .signature-fields {
-                margin-top: 6px !important;
+                margin-top: 12px !important;
             }
             
             /* ===== REMOVER EMOJIS ===== */
@@ -719,7 +749,7 @@
             }
             
             .bottom-section {
-                margin-top: 4px !important;
+                margin-top: 6px !important;
                 margin-bottom: 0 !important;
                 padding: 0 !important;
                 border: 1px solid #333 !important;
@@ -727,25 +757,27 @@
             
             .disposition-section,
             .inspection-section {
-                padding: 6px 8px !important;
+                padding: 12px 15px !important;
+                min-height: 80px !important;
                 white-space: pre-wrap !important;
                 word-wrap: break-word !important;
                 word-break: break-word !important;
             }
             
             .section-header {
-                padding: 4px 6px !important;
-                font-size: 9px !important;
-                line-height: 1.2 !important;
+                padding: 8px 12px !important;
+                font-size: 11px !important;
+                line-height: 1.4 !important;
                 background: #d0d0d0 !important;
                 color: #000 !important;
             }
             
             /* ===== LABELS E TEXTOS ===== */
             label {
-                font-size: 8px !important;
+                font-size: 10px !important;
                 color: #000 !important;
                 font-weight: normal !important;
+                line-height: 1.4 !important;
                 white-space: pre-wrap !important;
                 word-wrap: break-word !important;
                 word-break: break-word !important;
@@ -766,21 +798,21 @@
                 box-shadow: none !important;
             }
             
-            /* ===== ASSINATURAS FINAIS - COMPACTAS ===== */
+            /* ===== ASSINATURAS FINAIS - AUMENTADAS ===== */
             div[style*="margin-top: 15px"] {
-                margin-top: 4px !important;
+                margin-top: 10px !important;
             }
             
             div[style*="padding: 15px"] {
-                padding: 6px 8px !important;
+                padding: 18px 20px !important;
             }
             
             div[style*="padding: 8px"] {
-                padding: 4px 6px !important;
+                padding: 12px 15px !important;
             }
             
             div[style*="margin-bottom: 25px"] {
-                margin-bottom: 4px !important;
+                margin-bottom: 18px !important;
             }
         }
 
@@ -1064,20 +1096,23 @@
                    
                     Imprimir
                 </button>
-                <a href="/rnc/{{ rnc.id }}/download-pdf" class="btn btn-primary">
-                   
-                    Baixar PDF
-                </a>
+             
             </div>
         </div>
     </div>
 
     <div class="container">
-        <!-- Header igual ao new_rnc.html -->
+        <!-- Header com logos IPPEL e RNC centralizadas -->
         <div class="header">
-            <div class="logos">
+            <div class="logos" style="display: flex; justify-content: center; align-items: center; gap: 100px; padding: 20px 0; margin-bottom: 20px;">
+                <!-- Logo IPPEL -->
                 <div class="logo-ippel">
-                    <img src="/IPPELLOGO.jpg" alt="IPPEL" class="logo-img" style="width: 100px; height: 100px;">
+                    <img src="/IPPELLOGO.jpg" alt="IPPEL" class="logo-img" style="width: 120px; height: 120px; object-fit: contain;">
+                </div>
+                
+                <!-- Logo RNC/SQI -->
+                <div class="logo-rnc">
+                    <img src="/static/LOGOSQI.jpg" alt="SQ||||| RNC" class="logo-img" style="width: 120px; height: 120px; object-fit: contain;">
                 </div>
             </div>
         </div>
@@ -1152,16 +1187,16 @@
                 <!-- Linha 1: POSIÇÃO | MODELO | MATERIAL | QUANTIDADE -->
                 <table style="margin-bottom: 0;">
                     <tr>
-                        <td class="field-label" style="width: 25%;">POSIÇÃO</td>
-                        <td class="field-label" style="width: 25%;">MODELO</td>
-                        <td class="field-label" style="width: 25%;">MATERIAL</td>
-                        <td class="field-label" style="width: 25%;">QUANTIDADE</td>
+                        <td class="field-label" style="width: 25%; padding: 0px 2px; line-height: 1.0; height: 12px;">POSIÇÃO</td>
+                        <td class="field-label" style="width: 25%; padding: 0px 2px; line-height: 1.0; height: 12px;">MODELO</td>
+                        <td class="field-label" style="width: 25%; padding: 0px 2px; line-height: 1.0; height: 12px;">MATERIAL</td>
+                        <td class="field-label" style="width: 25%; padding: 0px 2px; line-height: 1.0; height: 12px;">QUANTIDADE</td>
                     </tr>
                     <tr>
-                        <td class="field-value">{{ rnc.position or '-' }}</td>
-                        <td class="field-value">{{ rnc.modelo or '-' }}</td>
-                        <td class="field-value">{{ rnc.material or '-' }}</td>
-                        <td class="field-value">{{ rnc.quantity or '-' }}</td>
+                        <td class="field-value" style="padding: 0px 2px; line-height: 1.0; height: 12px;">{{ rnc.position or '-' }}</td>
+                        <td class="field-value" style="padding: 0px 2px; line-height: 1.0; height: 12px;">{{ rnc.modelo or '-' }}</td>
+                        <td class="field-value" style="padding: 0px 2px; line-height: 1.0; height: 12px;">{{ rnc.material or '-' }}</td>
+                        <td class="field-value" style="padding: 0px 2px; line-height: 1.0; height: 12px;">{{ rnc.quantity or '-' }}</td>
                     </tr>
                 </table>
 
@@ -1180,18 +1215,18 @@
                 <!-- Linha 3: VALOR TOTAL | OBSERVAÇÃO -->
                 <table style="margin-bottom: 0;">
                     <tr>
-                        <td class="field-label" style="width: 30%;">VALOR TOTAL (R$)</td>
-                        <td class="field-label" style="width: 70%;">OBSERVAÇÃO</td>
+                        <td class="field-label" style="width: 30%; padding: 0px 2px; line-height: 1.0; height: 12px;">VALOR TOTAL (R$)</td>
+                        <td class="field-label" style="width: 70%; padding: 0px 2px; line-height: 1.0; height: 12px;">OBSERVAÇÃO</td>
                     </tr>
                     <tr>
-                        <td class="field-value" style="font-weight: bold; color: #6c757d;">
+                        <td class="field-value" style="font-weight: bold; color: #6c757d; padding: 0px 2px; line-height: 1.0; height: 12px;">
                             {% if rnc.price and rnc.price|float > 0 %}
                                 R$ {{ '%.2f'|format(rnc.price|float) }}
                             {% else %}
                                 -
                             {% endif %}
                         </td>
-                        <td class="field-value">{{ rnc.price_note or '-' }}</td>
+                        <td class="field-value" style="padding: 0px 2px; line-height: 1.0; height: 12px;">{{ rnc.price_note or '-' }}</td>
                     </tr>
                 </table>
             </div>
@@ -1354,15 +1389,15 @@
             <!-- Signature Row -->
             <div style="display: flex;">
                 <div style="width: 33.33%; padding: 15px; text-align: center; font-size: 11px; font-weight: bold; border-right: 1px solid #cccccc; background: #ffffff; color: rgb(0, 0, 0);">
-                    <div style="margin-bottom: 25px;">{{ rnc.signature_inspection_name or 'NOME' }}</div>
+                    <div style="margin-bottom: 25px;">{{ rnc.signature_inspection_name or '' }}</div>
                     <div style="border-top: 1px solid #6c757d; padding-top: 8px;">VISTO - Qualidade</div>
                 </div>
                 <div style="width: 33.33%; padding: 15px; text-align: center; font-size: 11px; font-weight: bold; border-right: 1px solid #cccccc;">
-                    <div style="margin-bottom: 25px;">{{ rnc.ass_responsavel or 'NOME' }}</div>
+                    <div style="margin-bottom: 25px;">{{ rnc.signature_engineering_name or '' }}</div>
                     <div style="border-top: 1px solid #6c757d; padding-top: 8px;">VISTO - Gerente do Setor</div>
                 </div>
                 <div style="width: 33.33%; padding: 15px; text-align: center; font-size: 11px; font-weight: bold;">
-                    <div style="margin-bottom: 25px;">{{ rnc.causador_name or rnc.signature_inspection2_name or 'NOME' }}</div>
+                    <div style="margin-bottom: 25px;">{{ rnc.causador_name or rnc.signature_inspection2_name or '' }}</div>
                     <div style="border-top: 1px solid #6c757d; padding-top: 8px;">VISTO - Causador</div>
                 </div>
             </div>

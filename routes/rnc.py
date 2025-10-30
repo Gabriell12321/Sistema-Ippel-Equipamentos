@@ -38,6 +38,134 @@ except Exception:
 logger = logging.getLogger('ippel.rnc')
 
 
+@rnc.route('/api/rnc/next-number', methods=['GET'])
+def get_next_rnc_number():
+    """Endpoint para obter o próximo número de RNC disponível"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Gerar número sequencial de RNC (começando em 34870)
+        BASE_NUMBER = 34729  # Base original para buscar todas as RNCs
+        MIN_NUMBER = 34870  # Número mínimo a ser usado nas próximas RNCs
+        
+        # Buscar o MAIOR número já usado (incluindo finalizadas e ativas)
+        cursor.execute("""
+            SELECT rnc_number FROM rncs 
+            WHERE rnc_number GLOB '[0-9]*'
+            AND CAST(rnc_number AS INTEGER) >= ?
+            ORDER BY CAST(rnc_number AS INTEGER) DESC 
+            LIMIT 1
+        """, (BASE_NUMBER,))
+        
+        last_rnc = cursor.fetchone()
+        
+        if last_rnc:
+            try:
+                last_number = int(last_rnc[0])
+                next_number = last_number + 1
+                # Garantir que o próximo número seja no mínimo MIN_NUMBER
+                if next_number < MIN_NUMBER:
+                    next_number = MIN_NUMBER
+                logger.info(f"Último número encontrado: {last_number}, próximo será: {next_number}")
+            except ValueError:
+                next_number = MIN_NUMBER
+                logger.warning(f"Erro ao converter último número, usando número mínimo: {MIN_NUMBER}")
+        else:
+            next_number = MIN_NUMBER
+            logger.info(f"Nenhum número anterior encontrado, começando em: {MIN_NUMBER}")
+        
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'next_number': str(next_number)
+        })
+        
+    except Exception as e:
+        logger.error(f"Erro ao gerar próximo número RNC: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Erro ao gerar número: {str(e)}'
+        }), 500
+
+
+@rnc.route('/api/rnc/<int:rnc_id>/renumber', methods=['POST'])
+@csrf_protect()
+def renumber_rnc(rnc_id):
+    """Endpoint para renumerar uma RNC (somente admin)"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+    
+    try:
+        from services.permissions import has_permission
+        from services.cache import clear_rnc_cache
+        
+        # Verificar se é admin
+        if not has_permission(session['user_id'], 'admin_access'):
+            return jsonify({
+                'success': False,
+                'message': 'Acesso negado: apenas administradores podem renumerar RNCs'
+            }), 403
+        
+        data = request.get_json() or {}
+        new_number = data.get('new_number')
+        
+        if not new_number:
+            return jsonify({'success': False, 'message': 'Número novo não fornecido'}), 400
+        
+        # Validar formato do número (apenas dígitos)
+        if not str(new_number).isdigit():
+            return jsonify({'success': False, 'message': 'Número deve conter apenas dígitos'}), 400
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Verificar se a RNC existe
+        cursor.execute('SELECT rnc_number, status FROM rncs WHERE id = ?', (rnc_id,))
+        rnc_data = cursor.fetchone()
+        
+        if not rnc_data:
+            conn.close()
+            return jsonify({'success': False, 'message': 'RNC não encontrada'}), 404
+        
+        old_number = rnc_data[0]
+        status = rnc_data[1]
+        
+        # Verificar se o novo número já existe
+        cursor.execute('SELECT id FROM rncs WHERE rnc_number = ? AND id != ?', (str(new_number), rnc_id))
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({
+                'success': False,
+                'message': f'O número {new_number} já está em uso por outra RNC'
+            }), 400
+        
+        # Atualizar o número
+        cursor.execute('UPDATE rncs SET rnc_number = ? WHERE id = ?', (str(new_number), rnc_id))
+        conn.commit()
+        conn.close()
+        
+        # Limpar cache
+        clear_rnc_cache()
+        
+        logger.info(f"✅ RNC {rnc_id} renumerada: {old_number} → {new_number} por usuário {session['user_id']}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'RNC renumerada com sucesso: {old_number} → {new_number}',
+            'old_number': old_number,
+            'new_number': new_number
+        })
+        
+    except Exception as e:
+        logger.error(f"Erro ao renumerar RNC {rnc_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Erro ao renumerar RNC: {str(e)}'
+        }), 500
+
+
 @rnc.route('/api/rnc/create', methods=['POST'])
 @csrf_protect()
 def create_rnc():
@@ -76,8 +204,9 @@ def create_rnc():
         cursor.execute("PRAGMA table_info(rncs)")
         cols = {row[1] for row in cursor.fetchall()}
 
-        # Gerar número sequencial de RNC (começando em 34729)
-        BASE_NUMBER = 34729
+        # Gerar número sequencial de RNC (começando em 34870) - ATUALIZADO
+        BASE_NUMBER = 34729  # Base original para buscar todas as RNCs
+        MIN_NUMBER = 34870  # Número mínimo a ser usado nas próximas RNCs (FORÇADO)
         
         # Buscar o MAIOR número já usado (incluindo finalizadas e ativas)
         cursor.execute("""
@@ -95,15 +224,18 @@ def create_rnc():
             try:
                 last_number = int(last_rnc[0])
                 next_number = last_number + 1
+                # Garantir que o próximo número seja no mínimo MIN_NUMBER
+                if next_number < MIN_NUMBER:
+                    next_number = MIN_NUMBER
                 logger.info(f"Último número encontrado: {last_number}, próximo será: {next_number}")
             except ValueError:
-                # Se falhar, usar base
-                next_number = BASE_NUMBER
-                logger.warning(f"Erro ao converter último número, usando base: {BASE_NUMBER}")
+                # Se falhar, usar MIN_NUMBER
+                next_number = MIN_NUMBER
+                logger.warning(f"Erro ao converter último número, usando número mínimo: {MIN_NUMBER}")
         else:
-            # Nenhum número encontrado, começar do BASE_NUMBER
-            next_number = BASE_NUMBER
-            logger.info(f"Nenhum número anterior encontrado, começando em: {BASE_NUMBER}")
+            # Nenhum número encontrado, começar do MIN_NUMBER
+            next_number = MIN_NUMBER
+            logger.info(f"Nenhum número anterior encontrado, começando em: {MIN_NUMBER}")
         
         rnc_number = f"{next_number}"
         logger.info(f" Gerando RNC com número: {rnc_number}")
@@ -128,7 +260,7 @@ def create_rnc():
 
         values_by_col = {
             'rnc_number': rnc_number,
-            'title': data.get('title', 'RNC sem título'),
+            'title': data.get('title') or data.get('description', '')[:100] or 'RNC sem título',
             'description': data.get('description', ''),
             'equipment': data.get('equipment', ''),
             'client': data.get('client', ''),
@@ -944,7 +1076,7 @@ def list_rncs():
                 logger.warning(f"Formato de data inválido (date_to): {filter_date_to} - {e}")
 
         columns = (
-            "r.id, r.rnc_number, r.title, r.equipment, r.client, r.priority, r.status, "
+            "r.id, r.rnc_number, r.title, r.description, r.equipment, r.client, r.priority, r.status, "
             "r.user_id, r.assigned_user_id, r.created_at, r.updated_at, r.finalized_at, "
             "r.responsavel, r.setor, r.area_responsavel, au.name AS assigned_user_name, u.name AS user_name, "
             "r.cv, r.mp, r.conjunto, r.modelo, r.drawing"
@@ -970,30 +1102,31 @@ def list_rncs():
             {
                 'id': rnc[0],
                 'rnc_number': rnc[1],
-                'title': rnc[2],
-                'equipment': rnc[3],
-                'client': rnc[4],
-                'priority': rnc[5],
-                'status': rnc[6],
-                'user_id': rnc[7],
-                'assigned_user_id': rnc[8],
-                'created_at': rnc[9],
-                'updated_at': rnc[10],
-                'finalized_at': rnc[11],
-                'responsavel': rnc[12] or 'N/A',  # Responsável do TXT
-                'setor': rnc[13] or 'N/A',  # Setor do TXT
-                'area_responsavel': rnc[14] or 'N/A',  # Ãrea responsÃ¡vel do TXT
-                'assigned_user_name': rnc[15],
-                'user_name': (rnc[16] if len(rnc) > 16 and rnc[16] else (rnc[12] or 'N/A')),  # Nome real do criador; fallback para 'responsavel'
-                'user_department': rnc[13] or 'N/A',  # Para compatibilidade
-                'department': rnc[14] or 'N/A',  # Ãrea responsÃ¡vel
-                'is_creator': (current_user_id == rnc[7]),
-                'is_assigned': (current_user_id == rnc[8]),
-                'cv': rnc[17] if len(rnc) > 17 else None,
-                'mp': rnc[18] if len(rnc) > 18 else None,
-                'conjunto': rnc[19] if len(rnc) > 19 else None,
-                'modelo': rnc[20] if len(rnc) > 20 else None,
-                'drawing': rnc[21] if len(rnc) > 21 else None
+                'title': (rnc[2] if (rnc[2] and str(rnc[2]).strip()) else (rnc[3][:100] + '...' if (len(rnc) > 3 and rnc[3] and len(str(rnc[3])) > 100) else (rnc[3] if (len(rnc) > 3 and rnc[3]) else 'RNC sem título'))),
+                'description': rnc[3] if len(rnc) > 3 else None,
+                'equipment': rnc[4] if len(rnc) > 4 else None,
+                'client': rnc[5] if len(rnc) > 5 else None,
+                'priority': rnc[6] if len(rnc) > 6 else 'Média',
+                'status': rnc[7] if len(rnc) > 7 else 'Pendente',
+                'user_id': rnc[8] if len(rnc) > 8 else None,
+                'assigned_user_id': rnc[9] if len(rnc) > 9 else None,
+                'created_at': rnc[10] if len(rnc) > 10 else None,
+                'updated_at': rnc[11] if len(rnc) > 11 else None,
+                'finalized_at': rnc[12] if len(rnc) > 12 else None,
+                'responsavel': rnc[13] if (len(rnc) > 13 and rnc[13]) else 'N/A',  # Responsável do TXT
+                'setor': rnc[14] if (len(rnc) > 14 and rnc[14]) else 'N/A',  # Setor do TXT
+                'area_responsavel': rnc[15] if (len(rnc) > 15 and rnc[15]) else 'N/A',  # Ãrea responsÃ¡vel do TXT
+                'assigned_user_name': rnc[16] if len(rnc) > 16 else None,
+                'user_name': (rnc[17] if (len(rnc) > 17 and rnc[17]) else 'N/A'),  # Nome real do criador
+                'user_department': rnc[14] if (len(rnc) > 14 and rnc[14]) else 'N/A',  # Para compatibilidade
+                'department': rnc[15] if (len(rnc) > 15 and rnc[15]) else 'N/A',  # Ãrea responsÃ¡vel
+                'is_creator': (current_user_id == rnc[8]) if len(rnc) > 8 else False,
+                'is_assigned': (current_user_id == rnc[9]) if len(rnc) > 9 else False,
+                'cv': rnc[18] if len(rnc) > 18 else None,
+                'mp': rnc[19] if len(rnc) > 19 else None,
+                'conjunto': rnc[20] if len(rnc) > 20 else None,
+                'modelo': rnc[21] if len(rnc) > 21 else None,
+                'drawing': rnc[22] if len(rnc) > 22 else None
             }
             for rnc in rncs_rows
         ]
@@ -1715,6 +1848,12 @@ def update_rnc_api(rnc_id):
         cause_rnc = data.get('cause_rnc', current.get('cause_rnc', ''))
         action_rnc = data.get('action_rnc', current.get('action_rnc', ''))
 
+        # Usar descrição como fallback para título se vazio
+        new_title = data.get('title') or current.get('title', '')
+        new_description = data.get('description', current.get('description', ''))
+        if not new_title and new_description:
+            new_title = new_description[:100]
+        
         cursor.execute('''
             UPDATE rncs 
             SET title = ?, description = ?, equipment = ?, client = ?, 
@@ -1735,8 +1874,8 @@ def update_rnc_api(rnc_id):
                 instruction_retrabalho = ?, cause_rnc = ?, action_rnc = ?
             WHERE id = ?
         ''', (
-            data.get('title', current.get('title','')),
-            data.get('description', current.get('description','')),
+            new_title,
+            new_description,
             data.get('equipment', current.get('equipment','')),
             data.get('client', current.get('client','')),
             data.get('priority', current.get('priority','Média')),

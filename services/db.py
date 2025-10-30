@@ -17,6 +17,9 @@ _pool_lock = threading.Lock()
 
 def _new_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # CRITICAL: Configure UTF-8 encoding to handle accents correctly
+    conn.text_factory = str
+    conn.execute('PRAGMA encoding="UTF-8"')
     # Performance pragmas
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA synchronous=NORMAL')

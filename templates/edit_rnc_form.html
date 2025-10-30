@@ -186,13 +186,214 @@
 <body>
     <div class="container">
         <script>
+            // Garantir que handlers globais existam imediatamente para evitar
+            // Uncaught ReferenceError quando elementos onclick são acionados
+            // antes dos scripts completos serem carregados (modo resposta).
+            window.preencherAssinatura = window.preencherAssinatura || function(elemento){
+                // Não bloquear a UI: apenas logar que o handler foi chamado antes
+                console.warn('preencherAssinatura chamado antes da inicialização completa', elemento);
+                // Retorna silenciosamente; a implementação real sobrescreverá este stub
+                return;
+            };
+
+            window.salvarAlteracoes = window.salvarAlteracoes || function(){
+                // Não bloquear a UI: apenas logar que o handler foi chamado antes
+                console.warn('salvarAlteracoes chamado antes da inicialização completa');
+                // Retorna silenciosamente; a implementação real sobrescreverá este stub
+                return;
+            };
+
+            // Marcar stubs para que possam ser detectados pelo helper
+            try { window.preencherAssinatura.__isStub = true; } catch(e){}
+            try { window.salvarAlteracoes.__isStub = true; } catch(e){}
+
+            // Helper: chama uma função global quando estiver disponível (polling amigável)
+            window.callWhenReady = window.callWhenReady || function(name, args){
+                args = args || [];
+                const iv = setInterval(function(){
+                    const fn = window[name];
+                    if (typeof fn === 'function' && !fn.__isStub) {
+                        clearInterval(iv);
+                        try { fn.apply(null, args); } catch(e){ console.error('Erro ao executar', name, e); }
+                    }
+                }, 50);
+            };
+
+            // Fallback imediato: definir uma implementação funcional de preencherAssinatura
+            (function ensurePreencherAssinaturaReady(){
+                if (window.preencherAssinatura && !window.preencherAssinatura.__isStub) return;
+                // fallback de setDateInputs caso não esteja definido ainda
+                if (typeof window.setDateInputs !== 'function') {
+                    window.setDateInputs = function(prefix, d, m, y){
+                        const di = document.getElementById(prefix + '_d');
+                        const mi = document.getElementById(prefix + '_m');
+                        const yi = document.getElementById(prefix + '_y');
+                        if (di && mi && yi) {
+                            di.value = d; mi.value = m; yi.value = y;
+                            di.readOnly = true; mi.readOnly = true; yi.readOnly = true;
+                            di.style.pointerEvents='none'; mi.style.pointerEvents='none'; yi.style.pointerEvents='none';
+                        }
+                    };
+                }
+                window.preencherAssinatura = function(elemento) {
+                    try {
+                        const nomeElement = elemento && elemento.querySelector ? elemento.querySelector('div[id^="nome_coluna"]') : null;
+                        if (!nomeElement) return;
+                        // Evitar sobrescrever se já houver assinatura
+                        if (nomeElement.textContent && nomeElement.textContent.trim() !== '' && nomeElement.textContent !== 'NOME') {
+                            try { if (typeof mostrarNotificacao === 'function') mostrarNotificacao('Assinatura já registrada.'); } catch(e){}
+                            return;
+                        }
+                        fetch('/api/user/info')
+                            .then(r => r.json())
+                            .then(data => {
+                                if (data && data.success && data.user) {
+                                    const nomeUsuario = data.user.name;
+                                    const departamento = data.user.department;
+                                    if (nomeElement) {
+                                        nomeElement.textContent = departamento ? (nomeUsuario + ' (' + departamento + ')') : nomeUsuario;
+                                        // feedback visual leve
+                                        try { elemento.style.transform = 'scale(1.02)'; setTimeout(()=>{ elemento.style.transform='scale(1)'; }, 200); } catch(_){ }
+                                        try { if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Assinatura preenchida automaticamente!'); } catch(_){ }
+                                        // Preencher data correspondente
+                                        const hoje = new Date();
+                                        const d = String(hoje.getDate()).padStart(2,'0');
+                                        const m = String(hoje.getMonth()+1).padStart(2,'0');
+                                        const y = String(hoje.getFullYear());
+                                        if (elemento.id === 'assinatura_coluna1') {
+                                            window.setDateInputs('insp1', d, m, y);
+                                        } else if (elemento.id === 'assinatura_coluna2') {
+                                            window.setDateInputs('eng', d, m, y);
+                                        } else if (elemento.id === 'assinatura_coluna3') {
+                                            window.setDateInputs('insp2', d, m, y);
+                                        }
+                                    }
+                                } else {
+                                    try { if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Erro: Usuário não autenticado', 'error'); } catch(_){ }
+                                }
+                            })
+                            .catch(err => { console.error('Erro ao buscar informações do usuário:', err); try { if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Erro ao preencher assinatura', 'error'); } catch(_){ } });
+                    } catch(e){ console.error('Erro em preencherAssinatura (fallback):', e); }
+                };
+                try { delete window.preencherAssinatura.__isStub; } catch(_){ }
+            })();
+
+            // Fallback imediato: implementação mínima de salvarAlteracoes
+            (function ensureSalvarAlteracoesReady(){
+                if (window.salvarAlteracoes && !window.salvarAlteracoes.__isStub) return;
+                function valById(id){
+                    var el = document.getElementById(id);
+                    return el ? (el.value ?? '') : '';
+                }
+                function checked(id){
+                    var el = document.getElementById(id);
+                    return !!(el && el.checked);
+                }
+                function parseMoney(br){
+                    if (!br) return null;
+                    var s = String(br).replace(/[^0-9,.-]/g,'').replace(/\.(?=\d{3})/g,'').replace(',', '.');
+                    var n = parseFloat(s);
+                    return isNaN(n) ? null : n;
+                }
+                window.salvarAlteracoes = function(){
+                    try {
+                        // Se possível, exigir ao menos uma assinatura
+                        try {
+                            if (typeof window.verificarAssinaturas === 'function' && !window.verificarAssinaturas()) {
+                                if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' É obrigatório preencher pelo menos uma assinatura!', 'error');
+                                return;
+                            }
+                        } catch(_){}
+
+                        var formData = {};
+                        // Campos principais simples (se existirem)
+                        ['title','description','equipment','client','rnc_number','mp','revision','position','cv','conjunto','modelo','description_drawing','quantity','material','purchase_order','responsavel','inspetor','area_responsavel','created_at','instruction_retrabalho','cause_rnc','action_rnc'].forEach(function(k){
+                            var v = valById(k);
+                            if (v !== '') formData[k] = v;
+                        });
+                        // Select específico usado na página
+                        var areaSel = document.getElementById('area_responsavel_select');
+                        if (areaSel && areaSel.value && !formData.area_responsavel) formData.area_responsavel = areaSel.value;
+
+                        // Preço e observação
+                        var priceRaw = valById('price');
+                        var priceVal = parseMoney(priceRaw);
+                        if (priceVal !== null) formData.price = priceVal;
+                        var priceNote = valById('price_note');
+                        if (priceNote) formData.price_note = priceNote;
+
+                        // Assinaturas
+                        formData.signature_inspection_name = document.getElementById('nome_coluna1')?.textContent || '';
+                        formData.signature_engineering_name = document.getElementById('nome_coluna2')?.textContent || '';
+                        formData.signature_inspection2_name = document.getElementById('nome_coluna3')?.textContent || '';
+                        formData.signature_inspection_date = [valById('insp1_d'), valById('insp1_m'), valById('insp1_y')].join('/');
+                        formData.signature_engineering_date = [valById('eng_d'), valById('eng_m'), valById('eng_y')].join('/');
+                        formData.signature_inspection2_date = [valById('insp2_d'), valById('insp2_m'), valById('insp2_y')].join('/');
+
+                        // Checkboxes de disposição/inspeção
+                        formData.disposition_usar = checked('usar');
+                        formData.disposition_retrabalhar = checked('retrabalhar');
+                        formData.disposition_rejeitar = checked('rejeitar');
+                        formData.disposition_sucata = checked('sucata');
+                        formData.disposition_devolver_estoque = checked('devolver_estoque');
+                        formData.disposition_devolver_fornecedor = checked('devolver_fornecedor');
+                        formData.inspection_aprovado = checked('aprovado');
+                        formData.inspection_reprovado = checked('reprovado');
+                        formData.inspection_ver_rnc = valById('ver_rnc_input');
+
+                        fetch('/api/rnc/{{ rnc.id }}/update', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(formData)
+                        })
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data && data.success) {
+                                try { localStorage.removeItem('dashboardCacheV1'); } catch(e){}
+                                if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Alterações salvas com sucesso!');
+                                setTimeout(() => { window.location.href = '/rnc/{{ rnc.id }}?_t=' + Date.now(); }, 800);
+                            } else {
+                                if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Erro ao salvar alterações' + (data && data.message ? ': ' + data.message : ''), 'error');
+                            }
+                        })
+                        .catch(err => { console.error('Erro ao salvar (fallback):', err); if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Erro ao salvar alterações', 'error'); });
+                    } catch(e){ console.error('Erro em salvarAlteracoes (fallback):', e); }
+                };
+                try { delete window.salvarAlteracoes.__isStub; } catch(_){ }
+            })();
+
+            // Interceptar cliques no nível de captura para assinaturas e botão salvar
+            document.addEventListener('click', function(ev){
+                try {
+                    const el = ev.target;
+                    // encontrar ancestral com id assinatura_coluna*
+                    const sig = el && el.closest ? el.closest('[id^="assinatura_coluna"]') : null;
+                    if (sig) {
+                        // evitar executar onclick inline (stub) que não faz nada útil
+                        ev.stopImmediatePropagation(); ev.preventDefault();
+                        window.callWhenReady('preencherAssinatura', [sig], 3000);
+                        return;
+                    }
+
+                    // botão salvar
+                    const btn = el && (el.id === 'btnSalvar' ? el : (el.closest ? el.closest('#btnSalvar') : null));
+                    if (btn) {
+                        ev.stopImmediatePropagation(); ev.preventDefault();
+                        window.callWhenReady('salvarAlteracoes', [], 3000);
+                        return;
+                    }
+                } catch(e) { /* quiet */ }
+            }, true);
+        </script>
+        <script>
             // Flag para saber se é modo Responder
             const IS_REPLY = {{ 'true' if is_reply else 'false' }};
+            console.log(' Edit RNC form script loaded');
         </script>
         <!-- Banner de modo de edição (apenas para edição, não para resposta) -->
         {% if not is_reply %}
         <div class="edit-mode-banner">
-            ✏️ MODO DE EDIÇÃO - RNC: {{ rnc.rnc_number }}
+            MODO DE EDIÇÃO - RNC: {{ rnc.rnc_number }}
         </div>
         {% endif %}
 
@@ -285,7 +486,7 @@
                     </tr>
                 </table>
 
-                <!-- 🔖 CAMPOS MOVIDOS PARA SEÇÃO COMPLEMENTARES -->
+                <!-- CAMPOS MOVIDOS PARA SEÇÃO COMPLEMENTARES -->
                 <!-- CV, MOD, QTDE LOTE, MATERIAL, POSIÇÃO, MP e VALOR TOTAL agora estão na seção COMPLEMENTARES abaixo -->
             </div>
         </div>
@@ -773,7 +974,7 @@
                         const funcionarioItem = group.find(it => /funcionário|funcionario|operador|pessoa|mão.*obra|mao.*obra/i.test(it.descricao));
                         if (funcionarioItem) {
                             result.push(funcionarioItem);
-                            console.log(`⚠️ Duplicação removida: Máquina e Funcionário com valor R$ ${funcionarioItem.subtotal.toFixed(2)} - mantido apenas Funcionário`);
+                            console.log(` Duplicação removida: Máquina e Funcionário com valor R$ ${funcionarioItem.subtotal.toFixed(2)} - mantido apenas Funcionário`);
                         } else {
                             // Fallback: manter o primeiro item
                             result.push(group[0]);
@@ -866,26 +1067,26 @@
     <!-- Barra de ações moderna -->
     <div class="action-bar">
         <button class="action-btn dashboard-btn" title="Voltar ao Dashboard" onclick="window.location.href='/dashboard'">
-            🏠
+           
             <span class="label">Dashboard</span>
         </button>
-        <button class="action-btn save-btn" title="Salvar Alterações" onclick="salvarAlteracoes()">
-            💾
+        <button id="btnSalvar" class="action-btn save-btn" title="Salvar Alterações" onclick="salvarAlteracoes()">
+           
             <span class="label">Salvar</span>
         </button>
     </div>
 </div>
 
 <script>
-        console.log('🔧 Script carregado - verificando funções...');
+        console.log(' Script carregado - verificando funções...');
         
         // Cache do usuário atual para uso em assinaturas
-        let __CURRENT_USER_NAME = null;
-        let __CURRENT_USER_DEPT = null;
+        var __CURRENT_USER_NAME = null;
+        var __CURRENT_USER_DEPT = null;
         
         // Função para mostrar notificações
         function mostrarNotificacao(mensagem, tipo = 'success') {
-            console.log('📢 Notificação:', mensagem, tipo);
+            console.log(' Notificação:', mensagem, tipo);
             const notificacao = document.createElement('div');
             
             let background, shadow;
@@ -925,22 +1126,71 @@
             }, 3000);
         }
 
-        // Função para verificar se há pelo menos uma assinatura
-        function verificarAssinaturas() {
-            console.log('🔍 Verificando assinaturas...');
+        // Função para verificar se há pelo menos uma assinatura - DEFINIDA DIRETAMENTE NO WINDOW
+        window.verificarAssinaturas = function() {
+            console.log(' Verificando assinaturas...');
             const assinaturas = [
                 document.getElementById('nome_coluna1')?.textContent || '',
                 document.getElementById('nome_coluna2')?.textContent || '',
                 document.getElementById('nome_coluna3')?.textContent || ''
             ];
             
-            console.log('📝 Assinaturas encontradas:', assinaturas);
+            console.log(' Assinaturas encontradas:', assinaturas);
             return assinaturas.some(assinatura => assinatura && assinatura !== 'NOME' && assinatura.trim() !== '');
+        };
+        
+        console.log(' window.verificarAssinaturas definida:', typeof window.verificarAssinaturas);
+
+        // Função chamada quando o setor responsável é alterado
+        async function onAreaResponsavelChange() {
+            console.log(' Setor responsável alterado');
+            const select = document.getElementById('area_responsavel_select');
+            const selectedGroup = select.value;
+            
+            if (!selectedGroup) {
+                console.log(' Nenhum setor selecionado');
+                return;
+            }
+            
+            console.log(' Buscando gerente do grupo:', selectedGroup);
+            
+            try {
+                // Buscar o gerente do grupo selecionado
+                const response = await fetch(`/admin/managers/api/group/${encodeURIComponent(selectedGroup)}/manager`, {
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.manager) {
+                    console.log(' Gerente encontrado:', data.manager.name);
+                    
+                    // Preencher assinatura automaticamente
+                    const assResponsavelInput = document.getElementById('ass_responsavel');
+                    if (assResponsavelInput && (!assResponsavelInput.value || assResponsavelInput.value.trim() === '')) {
+                        assResponsavelInput.value = data.manager.name;
+                        console.log(' Assinatura responsável preenchida automaticamente:', data.manager.name);
+                        mostrarNotificacao(` Assinatura preenchida: ${data.manager.name}`, 'success');
+                    }
+                } else {
+                    console.warn(' Nenhum gerente definido para este setor');
+                    mostrarNotificacao(' Nenhum gerente definido para este setor', 'error');
+                }
+            } catch (error) {
+                console.error(' Erro ao buscar gerente:', error);
+                mostrarNotificacao(' Erro ao buscar gerente do setor', 'error');
+            }
+        }
+        
+        // Função chamada quando o nome do responsável é alterado (causador)
+        function onNomeResponsavelChange() {
+            console.log(' Nome responsável (causador) alterado');
+            // Aqui pode adicionar lógica adicional se necessário
         }
 
-        // Função para preencher assinatura automaticamente
-        function preencherAssinatura(elemento) {
-            console.log('✍️ Preenchendo assinatura...');
+        // Função para preencher assinatura automaticamente - DEFINIDA DIRETAMENTE NO WINDOW
+        window.preencherAssinatura = function(elemento) {
+            console.log(' Preenchendo assinatura...');
             const nomeElement = elemento.querySelector('div[id^="nome_coluna"]');
             // Se já existe assinatura, não permitir remover (travado)
             if (nomeElement && nomeElement.textContent && nomeElement.textContent.trim() !== '' && nomeElement.textContent !== 'NOME') {
@@ -965,31 +1215,33 @@
                                 elemento.style.transform = 'scale(1)';
                             }, 200);
                             
-                            mostrarNotificacao('✅ Assinatura preenchida automaticamente!');
+                            mostrarNotificacao(' Assinatura preenchida automaticamente!');
                             // Preencher data correspondente e travar inputs
                             const hoje = new Date();
                             const d = String(hoje.getDate()).padStart(2,'0');
                             const m = String(hoje.getMonth()+1).padStart(2,'0');
                             const y = String(hoje.getFullYear());
                             if (elemento.id === 'assinatura_coluna1') {
-                                setDateInputs('insp1', d, m, y);
+                                window.setDateInputs('insp1', d, m, y);
                             } else if (elemento.id === 'assinatura_coluna2') {
-                                setDateInputs('eng', d, m, y);
+                                window.setDateInputs('eng', d, m, y);
                             } else if (elemento.id === 'assinatura_coluna3') {
-                                setDateInputs('insp2', d, m, y);
+                                window.setDateInputs('insp2', d, m, y);
                             }
                         }
                     } else {
-                        mostrarNotificacao('❌ Erro: Usuário não autenticado', 'error');
+                        mostrarNotificacao(' Erro: Usuário não autenticado', 'error');
                     }
                 })
                 .catch(error => {
                     console.error('Erro ao buscar informações do usuário:', error);
-                    mostrarNotificacao('❌ Erro ao preencher assinatura', 'error');
+                    mostrarNotificacao(' Erro ao preencher assinatura', 'error');
                 });
-        }
+        };
+        
+        console.log(' window.preencherAssinatura definida:', typeof window.preencherAssinatura);
 
-        function setDateInputs(prefix, d, m, y) {
+        window.setDateInputs = function(prefix, d, m, y) {
             const di = document.getElementById(prefix + '_d');
             const mi = document.getElementById(prefix + '_m');
             const yi = document.getElementById(prefix + '_y');
@@ -998,15 +1250,17 @@
                 di.readOnly = true; mi.readOnly = true; yi.readOnly = true;
                 di.style.pointerEvents='none'; mi.style.pointerEvents='none'; yi.style.pointerEvents='none';
             }
-        }
+        };
+        
+        console.log(' window.setDateInputs definida:', typeof window.setDateInputs);
 
-        // Função para salvar alterações
-        function salvarAlteracoes() {
-            console.log('💾 Função salvarAlteracoes chamada!');
+        // Função para salvar alterações (implementação completa) - DEFINIDA DIRETAMENTE NO WINDOW
+        window.salvarAlteracoes = function() {
+            console.log(' Função salvarAlteracoes chamada!');
             
             // Verificar se há pelo menos uma assinatura
-            if (!verificarAssinaturas()) {
-                mostrarNotificacao('❌ É obrigatório preencher pelo menos uma assinatura!', 'error');
+            if (!window.verificarAssinaturas()) {
+                mostrarNotificacao(' É obrigatório preencher pelo menos uma assinatura!', 'error');
                 return;
             }
 
@@ -1032,7 +1286,7 @@
                 });
             })();
 
-            // 🔒 PRIMEIRO: DETECTAR TODOS OS CAMPOS BLOQUEADOS
+            // PRIMEIRO: DETECTAR TODOS OS CAMPOS BLOQUEADOS
             {% if is_reply %}
             // Esta variável será preenchida pela API de campos bloqueados
             window.apiBlockedFields = window.apiBlockedFields || [];
@@ -1045,11 +1299,11 @@
                 }
             });
             
-            console.log('🔒 Campos bloqueados detectados:', Array.from(disabledFieldNames));
-            console.log('🔒 Campos bloqueados da API:', window.apiBlockedFields);
+            console.log(' Campos bloqueados detectados:', Array.from(disabledFieldNames));
+            console.log(' Campos bloqueados da API:', window.apiBlockedFields);
             {% endif %}
             
-            // 🔒 SEGUNDO: COLETAR APENAS CAMPOS NÃO BLOQUEADOS
+            // SEGUNDO: COLETAR APENAS CAMPOS NÃO BLOQUEADOS
             const formData = {};
             
             {% if is_reply %}
@@ -1173,7 +1427,7 @@
             {% endif %}
 
             {% if is_reply %}
-            // 🔒 ADICIONAR mapeamentos e detectar checkboxes/datas/assinaturas bloqueadas
+            // ADICIONAR mapeamentos e detectar checkboxes/datas/assinaturas bloqueadas
             try {
                 const checkboxMap = {
                     'usar': 'disposition_usar',
@@ -1236,7 +1490,7 @@
                     }
                 });
                 
-                console.log('🔒 Total de campos bloqueados:', Array.from(disabledFieldNames));
+                console.log(' Total de campos bloqueados:', Array.from(disabledFieldNames));
                 
                 // ADICIONAR APENAS SE NÃO BLOQUEADOS
                 
@@ -1251,7 +1505,7 @@
                     formData.signature_inspection2_name = document.getElementById('nome_coluna3')?.textContent || '';
                 }
                 
-                // ✅ CORREÇÃO: Datas de assinatura só devem ser enviadas se NÃO estiverem bloqueadas
+                // CORREÇÃO: Datas de assinatura só devem ser enviadas se NÃO estiverem bloqueadas
                 // Campos bloqueados não devem ser enviados ao backend (o banco já tem os valores corretos)
                 if (!disabledFieldNames.has('signature_inspection_date')) {
                     formData.signature_inspection_date = [
@@ -1277,7 +1531,7 @@
                     ].join('/');
                 }
                 
-                console.log('📅 Datas de assinatura enviadas:', {
+                console.log(' Datas de assinatura enviadas:', {
                     inspection: formData.signature_inspection_date || '(bloqueado - não enviado)',
                     engineering: formData.signature_engineering_date || '(bloqueado - não enviado)',
                     inspection2: formData.signature_inspection2_date || '(bloqueado - não enviado)'
@@ -1317,15 +1571,15 @@
                 // Status
                 if (!disabledFieldNames.has('status')) {
                     formData.status = 'Pendente';
-                    console.log('✅ Status definido como Pendente (campo permitido)');
+                    console.log(' Status definido como Pendente (campo permitido)');
                 } else {
-                    console.log('⚠️  Status NÃO adicionado (campo bloqueado)');
+                    console.log('  Status NÃO adicionado (campo bloqueado)');
                 }
                 
-                console.log('✅ Payload final (apenas campos permitidos):', formData);
+                console.log(' Payload final (apenas campos permitidos):', formData);
                 
             } catch(e) {
-                console.error('❌ Erro ao filtrar campos bloqueados:', e);
+                console.error(' Erro ao filtrar campos bloqueados:', e);
             }
             {% else %}
             // Modo criação - enviar todos os campos normalmente
@@ -1358,20 +1612,22 @@
             .then(data => {
                 if (data.success) {
                     try { localStorage.removeItem('dashboardCacheV1'); } catch(e){}
-                    mostrarNotificacao('✅ Alterações salvas com sucesso!');
+                    mostrarNotificacao(' Alterações salvas com sucesso!');
                     setTimeout(() => {
                         const ts = Date.now();
                         window.location.href = '/rnc/{{ rnc.id }}?_t=' + ts;
                     }, 1000);
                 } else {
-                    mostrarNotificacao('❌ Erro ao salvar alterações: ' + data.message, 'error');
+                    mostrarNotificacao(' Erro ao salvar alterações: ' + data.message, 'error');
                 }
             })
             .catch(error => {
                 console.error('Erro ao salvar:', error);
-                mostrarNotificacao('❌ Erro ao salvar alterações', 'error');
+                mostrarNotificacao(' Erro ao salvar alterações', 'error');
             });
-        }
+        };
+        
+        console.log(' window.salvarAlteracoes definida:', typeof window.salvarAlteracoes);
 
         // Carregar informações do usuário quando a página carregar
         // Carregar usuários para select de atribuição
@@ -1403,15 +1659,87 @@
                         select.value = currentAssignedId;
                     }
                     
-                    console.log('✅ Select de atribuição populado com', data.users.length, 'usuários');
+                    console.log(' Select de atribuição populado com', data.users.length, 'usuários');
                 }
             } catch (error) {
-                console.error('❌ Erro ao carregar usuários:', error);
+                console.error(' Erro ao carregar usuários:', error);
+            }
+        }
+
+        // Carregar grupos (setores) para o select de área responsável
+        async function loadGroups() {
+            try {
+                const response = await fetch('/admin/managers/api/groups', { credentials: 'include' });
+                const data = await response.json();
+                
+                if (data && data.success && data.groups) {
+                    const select = document.getElementById('area_responsavel_select');
+                    if (select) {
+                        // Limpar opções existentes (exceto a primeira)
+                        while (select.options.length > 1) {
+                            select.remove(1);
+                        }
+                        
+                        // Adicionar grupos
+                        data.groups.forEach(group => {
+                            const option = document.createElement('option');
+                            option.value = group.name;
+                            option.textContent = group.name;
+                            select.appendChild(option);
+                        });
+                        
+                        // Selecionar o grupo atual se houver
+                        const currentGroup = "{{ rnc.area_responsavel or '' }}";
+                        if (currentGroup) {
+                            select.value = currentGroup;
+                        }
+                        
+                        console.log(' Select de grupos populado com', data.groups.length, 'grupos');
+                    }
+                }
+            } catch (error) {
+                console.error(' Erro ao carregar grupos:', error);
+            }
+        }
+
+        // Carregar usuários para o select de nome causador
+        async function loadUsers() {
+            try {
+                const response = await fetch('/api/users/list', { credentials: 'include' });
+                const data = await response.json();
+                
+                if (data && data.success && data.users) {
+                    const select = document.getElementById('nome_responsavel');
+                    if (select) {
+                        // Limpar opções existentes (exceto a primeira)
+                        while (select.options.length > 1) {
+                            select.remove(1);
+                        }
+                        
+                        // Adicionar usuários
+                        data.users.forEach(user => {
+                            const option = document.createElement('option');
+                            option.value = user.name;
+                            option.textContent = `${user.name} (${user.department || 'Sem setor'})`;
+                            select.appendChild(option);
+                        });
+                        
+                        // Selecionar o usuário atual se houver
+                        const currentResponsavel = "{{ rnc.responsavel or '' }}";
+                        if (currentResponsavel) {
+                            select.value = currentResponsavel;
+                        }
+                        
+                        console.log(' Select de usuários causadores populado com', data.users.length, 'usuários');
+                    }
+                }
+            } catch (error) {
+                console.error(' Erro ao carregar usuários causadores:', error);
             }
         }
 
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('🚀 DOM carregado - inicializando...');
+            console.log(' DOM carregado - inicializando...');
             
             try {
                 fetch('/api/user/info', { credentials: 'include' })
@@ -1420,7 +1748,20 @@
                         if (d && d.success && d.user) {
                             __CURRENT_USER_NAME = d.user.name || null;
                             __CURRENT_USER_DEPT = d.user.department || null;
-                            console.log('👤 Usuário carregado:', __CURRENT_USER_NAME, __CURRENT_USER_DEPT);
+                            console.log(' Usuário carregado:', __CURRENT_USER_NAME, __CURRENT_USER_DEPT);
+                        }
+                    })
+                    .catch(() => {});
+            } catch(_) {}
+            
+            // Carregar usuários para o select de atribuição
+            loadAssignedUsers();
+            
+            // Carregar grupos (setores) para o select de área responsável
+            loadGroups();
+            
+            // Carregar usuários para o select de nome causador
+            loadUsers();
                         }
                     })
                     .catch(() => {});
@@ -1430,7 +1771,7 @@
             loadAssignedUsers();
 
             // � PREENCHER DATAS DE ASSINATURA DO BANCO DE DADOS
-            console.log('📅 Carregando datas de assinatura...');
+            console.log(' Carregando datas de assinatura...');
             try {
                 // Data de Inspeção 1
                 const signatureInspectionDate = "{{ rnc.signature_inspection_date or '' }}";
@@ -1440,7 +1781,7 @@
                         document.getElementById('insp1_d').value = parts1[0] || '';
                         document.getElementById('insp1_m').value = parts1[1] || '';
                         document.getElementById('insp1_y').value = parts1[2] || '';
-                        console.log('✅ Data Inspeção 1 carregada:', signatureInspectionDate);
+                        console.log(' Data Inspeção 1 carregada:', signatureInspectionDate);
                     }
                 }
                 
@@ -1452,7 +1793,7 @@
                         document.getElementById('eng_d').value = parts2[0] || '';
                         document.getElementById('eng_m').value = parts2[1] || '';
                         document.getElementById('eng_y').value = parts2[2] || '';
-                        console.log('✅ Data Engenharia carregada:', signatureEngineeringDate);
+                        console.log(' Data Engenharia carregada:', signatureEngineeringDate);
                     }
                 }
                 
@@ -1464,17 +1805,17 @@
                         document.getElementById('insp2_d').value = parts3[0] || '';
                         document.getElementById('insp2_m').value = parts3[1] || '';
                         document.getElementById('insp2_y').value = parts3[2] || '';
-                        console.log('✅ Data Inspeção 2 carregada:', signatureInspection2Date);
+                        console.log(' Data Inspeção 2 carregada:', signatureInspection2Date);
                     }
                 }
             } catch (e) {
-                console.error('❌ Erro ao carregar datas de assinatura:', e);
+                console.error(' Erro ao carregar datas de assinatura:', e);
             }
 
-            // �🔒 CARREGAR CAMPOS BLOQUEADOS (contexto: response)
+            // � CARREGAR CAMPOS BLOQUEADOS (contexto: response)
             {% if is_reply %}
             try {
-                console.log('🔒 Carregando campos bloqueados para resposta...');
+                console.log(' Carregando campos bloqueados para resposta...');
                 
                 // Mapeamento: nome do campo no banco → ID no HTML
                 const fieldIdMap = {
@@ -1496,19 +1837,19 @@
                     .then(data => {
                         if (data && data.success && data.locked_fields) {
                             const lockedFields = data.locked_fields;
-                            console.log(`🔒 ${lockedFields.length} campos bloqueados:`, lockedFields);
+                            console.log(` ${lockedFields.length} campos bloqueados:`, lockedFields);
                             
                             // IMPORTANTE: Armazenar campos bloqueados para uso na função salvarAlteracoes
                             window.apiBlockedFields = lockedFields;
                             
-                            // 🔒 NOVA LÓGICA: Usar readonly SEMPRE (nunca disabled) para manter valores visíveis
+                            // NOVA LÓGICA: Usar readonly SEMPRE (nunca disabled) para manter valores visíveis
                             lockedFields.forEach(fieldName => {
                                 // Verificar se precisa mapear o nome
                                 const actualId = fieldIdMap[fieldName] || fieldName;
                                 const field = document.getElementById(actualId);
                                 
                                 if (field) {
-                                    // ✅ SOLUÇÃO: Usar readonly para TODOS os campos (mantém valores visíveis)
+                                    // SOLUÇÃO: Usar readonly para TODOS os campos (mantém valores visíveis)
                                     field.readOnly = true;
                                     field.setAttribute('readonly', 'readonly');
                                     
@@ -1519,7 +1860,7 @@
                                     field.style.color = '#212529';  // Texto preto/escuro - fácil leitura
                                     field.style.fontWeight = '500';  // Negrito leve
                                     field.style.border = '2px solid #adb5bd';  // Borda cinza para indicar bloqueio
-                                    field.title = `🔒 Campo bloqueado para seu grupo (somente leitura) - valores preenchidos pelo usuário anterior`;
+                                    field.title = ` Campo bloqueado para seu grupo (somente leitura) - valores preenchidos pelo usuário anterior`;
                                     
                                     // Para checkboxes: desabilitar interação mas manter visual
                                     if (field.type === 'checkbox') {
@@ -1540,16 +1881,16 @@
                                     if (td && !td.querySelector('.lock-icon')) {
                                         const lockIcon = document.createElement('span');
                                         lockIcon.className = 'lock-icon';
-                                        lockIcon.innerHTML = '🔒';
+                                        lockIcon.innerHTML = '';
                                         lockIcon.style.cssText = 'position: absolute; top: 8px; right: 8px; font-size: 14px; opacity: 0.5;';
                                         td.style.position = 'relative';
                                         td.appendChild(lockIcon);
                                     }
                                     
-                                    console.log(`  ✅ Campo '${fieldName}' bloqueado (readonly + valores VISÍVEIS)`);
+                                    console.log(`  Campo '${fieldName}' bloqueado (readonly + valores VISÍVEIS)`);
                                 }
                                 
-                                // 🔒 BLOQUEAR BOTÃO "Adicionar Valores" se campo price estiver bloqueado
+                                // BLOQUEAR BOTÃO "Adicionar Valores" se campo price estiver bloqueado
                                 if (fieldName === 'price') {
                                     const addValoresBtn = document.getElementById('addValoresBtn');
                                     const priceInput = document.getElementById('price');
@@ -1558,10 +1899,10 @@
                                         addValoresBtn.style.backgroundColor = '#6c757d';
                                         addValoresBtn.style.cursor = 'not-allowed';
                                         addValoresBtn.style.opacity = '0.5';
-                                        addValoresBtn.title = '🔒 Bloqueado: campo de valor está bloqueado para seu grupo';
+                                        addValoresBtn.title = ' Bloqueado: campo de valor está bloqueado para seu grupo';
                                         addValoresBtn.onmouseover = null;
                                         addValoresBtn.onmouseout = null;
-                                        console.log('  🔒 Botão "Adicionar Valores" bloqueado');
+                                        console.log('  Botão "Adicionar Valores" bloqueado');
                                     }
                                     // Manter valor do price bem visível com destaque verde
                                     if (priceInput) {
@@ -1572,16 +1913,16 @@
                                 }
                             });
                             
-                            console.log('✅ Campos bloqueados aplicados com sucesso!');
+                            console.log(' Campos bloqueados aplicados com sucesso!');
                         } else {
-                            console.log('ℹ️  Nenhum campo bloqueado encontrado');
+                            console.log('  Nenhum campo bloqueado encontrado');
                         }
                     })
                     .catch(err => {
-                        console.error('❌ Erro ao carregar campos bloqueados:', err);
+                        console.error(' Erro ao carregar campos bloqueados:', err);
                     });
             } catch(e) {
-                console.error('❌ Erro ao processar campos bloqueados:', e);
+                console.error(' Erro ao processar campos bloqueados:', e);
             }
             {% endif %}
 
@@ -1603,8 +1944,8 @@
                 dataEmissao.value = `${dia}/${mes}/${ano}`;
             }
             
-            console.log('✅ Inicialização concluída!');
-            console.log('🔍 Funções disponíveis:', {
+            console.log(' Inicialização concluída!');
+            console.log(' Funções disponíveis:', {
                 'salvarAlteracoes': typeof salvarAlteracoes,
                 'verificarAssinaturas': typeof verificarAssinaturas,
                 'mostrarNotificacao': typeof mostrarNotificacao,
@@ -1626,7 +1967,9 @@
         `;
         document.head.appendChild(style);
         
-        console.log('🔧 Script carregado completamente!');
+        console.log(' Script carregado completamente!');
+        console.log(' Verificação final - window.preencherAssinatura:', typeof window.preencherAssinatura);
+        console.log(' Verificação final - window.salvarAlteracoes:', typeof window.salvarAlteracoes);
     </script>
 
     <!-- Modal de Seleção de Valores -->
@@ -1635,7 +1978,7 @@
             <!-- Cabeçalho -->
             <div style="background: linear-gradient(135deg, #8b1538 0%, #6d1029 100%); color: white; padding: 25px 30px; border-radius: 15px 15px 0 0; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(139, 21, 56, 0.3);">
                 <div style="display: flex; align-items: center; gap: 15px;">
-                    <span style="font-size: 32px;">💰</span>
+                    <span style="font-size: 32px;"></span>
                     <h2 style="margin: 0; font-size: 24px; font-weight: 700;">Adicionar Valores ao Orçamento</h2>
                 </div>
                 <button onclick="closeValoresSelectionModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; font-size: 28px; cursor: pointer; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">×</button>
@@ -1643,7 +1986,7 @@
 
             <!-- Barra de Busca -->
             <div style="padding: 20px 30px; background: #f8f9fa; border-bottom: 1px solid #dee2e6;">
-                <input type="text" id="valoresSelectionSearch" placeholder="🔍 Buscar por código ou descrição..." onkeyup="filterValoresSelection()" style="width: 100%; padding: 12px 20px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; transition: all 0.3s;" onfocus="this.style.borderColor='#007bff'" onblur="this.style.borderColor='#ddd'">
+                <input type="text" id="valoresSelectionSearch" placeholder=" Buscar por código ou descrição..." onkeyup="filterValoresSelection()" style="width: 100%; padding: 12px 20px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; transition: all 0.3s;" onfocus="this.style.borderColor='#007bff'" onblur="this.style.borderColor='#ddd'">
             </div>
 
             <!-- Conteúdo com Tabela -->
@@ -1679,8 +2022,8 @@
                         </span>
                     </div>
                     <div style="display: flex; gap: 10px;">
-                        <button onclick="clearValoresSelection()" style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;" onmouseover="this.style.background='#c82333'" onmouseout="this.style.background='#dc3545'">🗑️ Limpar</button>
-                        <button onclick="applyValoresSelection()" style="padding: 10px 30px; background: #28a745; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;" onmouseover="this.style.background='#218838'" onmouseout="this.style.background='#28a745'">✅ Aplicar Valores</button>
+                        <button onclick="clearValoresSelection()" style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;" onmouseover="this.style.background='#c82333'" onmouseout="this.style.background='#dc3545'"> Limpar</button>
+                        <button onclick="applyValoresSelection()" style="padding: 10px 30px; background: #28a745; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;" onmouseover="this.style.background='#218838'" onmouseout="this.style.background='#28a745'"> Aplicar Valores</button>
                         <button onclick="closeValoresSelectionModal()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;" onmouseover="this.style.background='#5a6268'" onmouseout="this.style.background='#6c757d'">Cancelar</button>
                     </div>
                 </div>
