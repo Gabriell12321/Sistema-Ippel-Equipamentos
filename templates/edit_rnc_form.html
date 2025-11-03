@@ -459,7 +459,7 @@
                                 {% endfor %}
                             </select>
                         </td>
-                        <td><input type="text" name="drawing" class="input-field" placeholder="Número do Desenho" data-field="drawing" value="{{ rnc.title or txt_fields.get('Desenho') or '' }}"></td>
+                        <td><input type="text" name="drawing" class="input-field" placeholder="Número do Desenho" data-field="drawing" value="{{ rnc.drawing or txt_fields.get('Desenho') or '' }}"></td>
                         <td><input type="text" name="revision" class="input-field" placeholder="Revisão" data-field="revision" value="{{ rnc.revision or txt_fields.get('Revisão') or txt_fields.get('REVISAO') or '' }}"></td>
                     </tr>
                 </table>
@@ -476,13 +476,13 @@
                     </tr>
                 </table>
 
-                <!-- Linha 3: DESCRIÇÃO -->
+                <!-- Linha 3: DESCRIÇÃO DO DESENHO -->
                 <table style="margin-bottom: 0;">
                     <tr>
-                        <td class="field-label" style="width: 100%;">DESCRIÇÃO</td>
+                        <td class="field-label" style="width: 100%;">DESCRIÇÃO DO DESENHO</td>
                     </tr>
                     <tr>
-                        <td><input type="text" name="description_drawing" class="input-field" placeholder="Descrição do desenho" data-field="description_drawing" value="{{ rnc.description_drawing or txt_fields.get('Descrição da RNC') or txt_fields.get('Descrição do desenho') or '' }}"></td>
+                        <td><input type="text" name="description_drawing" class="input-field" placeholder="Descrição do desenho" data-field="description_drawing" value="{{ rnc.description_drawing or txt_fields.get('Descrição do desenho') or '' }}"></td>
                     </tr>
                 </table>
 

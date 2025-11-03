@@ -3451,6 +3451,12 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
         
         // Criar linha da tabela
         function createRNCTableRow(rnc, tab) {
+            // Validação crítica: garantir que o ID existe
+            if (!rnc || !rnc.id) {
+                console.error('❌ ERRO CRÍTICO: RNC sem ID!', rnc);
+                return ''; // Não renderizar linha inválida
+            }
+            
             const createdDate = rnc.created_at ? new Date(rnc.created_at).toLocaleDateString('pt-BR') : 'N/A';
             
             // Limpar título removendo "RNC XXXXX - " no início
@@ -3468,15 +3474,41 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
             if (!cleanRncNumber.startsWith('RNC-')) {
                 cleanRncNumber = 'RNC-' + cleanRncNumber;
             }
+            
+            // Log para debug (apenas primeira RNC para não poluir console)
+            if (rnc.id && Math.random() < 0.05) { // 5% de chance de log
+                console.log('🔍 createRNCTableRow debug:', {
+                    id: rnc.id,
+                    cleanRncNumber,
+                    cleanTitle: cleanTitle.substring(0, 50),
+                    tab
+                });
+            }
 
             // Preparar identificação de responsável real
-            // Preferência: campo textual 'responsavel' vindo da RNC → usuário atribuído → criador da RNC
-            const _respTxt = (rnc.responsavel || '').toString().trim();
-            const responsibleName = (_respTxt && _respTxt.toUpperCase() !== 'N/A' && _respTxt !== '-')
-                ? _respTxt
-                : (rnc.assigned_user_name && String(rnc.assigned_user_name).trim())
-                    ? rnc.assigned_user_name
-                    : (rnc.user_name || 'N/I');
+            // CORRIGIDO: Para RNCs finalizadas, usar CAUSADOR_NOME e SETOR_RESPONSAVEL da assinatura
+            let responsibleName, setorName;
+            
+            if (tab === 'finalized') {
+                // RNCs FINALIZADAS: mostrar dados da assinatura (visualização da RNC)
+                responsibleName = (rnc.causador_nome && String(rnc.causador_nome).trim())
+                    ? rnc.causador_nome
+                    : 'N/A';
+                
+                setorName = (rnc.setor_responsavel && String(rnc.setor_responsavel).trim())
+                    ? rnc.setor_responsavel
+                    : (rnc.setor || 'N/A');
+            } else {
+                // RNCs ATIVAS: usar lógica antiga (responsavel do TXT ou assigned)
+                const _respTxt = (rnc.responsavel || '').toString().trim();
+                responsibleName = (_respTxt && _respTxt.toUpperCase() !== 'N/A' && _respTxt !== '-')
+                    ? _respTxt
+                    : (rnc.assigned_user_name && String(rnc.assigned_user_name).trim())
+                        ? rnc.assigned_user_name
+                        : (rnc.user_name || 'N/I');
+                
+                setorName = rnc.setor || 'N/A';
+            }
             
             return `
                 <tr class="rnc-table-row" data-rnc-id="${rnc.id}" id="rnc-${rnc.id}">
@@ -3487,7 +3519,7 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                     <td class="rnc-equipment-cell">${rnc.equipment || 'N/A'}</td>
                     <td class="rnc-cv-cell">${rnc.cv || 'N/A'}</td>
                     <td class="rnc-drawing-cell">${rnc.drawing || 'N/A'}</td>
-                    <td class="rnc-setor-cell">${rnc.setor || 'N/A'}</td>
+                    <td class="rnc-setor-cell">${setorName}</td>
                     <td class="rnc-user-cell">${responsibleName}</td>
                     <td class="rnc-date-cell">${createdDate}</td>
                     <td class="rnc-actions-cell">
@@ -3496,6 +3528,17 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                             ? `<a href="/rnc/${rnc.id}/chat" class="action-btn btn-chat" title="Histórico de Mensagens"></a>`
                             : `<a href="/rnc/${rnc.id}/chat" class="action-btn btn-chat" title="Chat"></a>`
                         }
+                        ${(window.isAdmin && tab === 'finalized') ? `
+                            <button 
+                                class="action-btn admin-options-btn" 
+                                title="Opções Administrativas" 
+                                data-rnc-id="${rnc.id}"
+                                data-rnc-number="${cleanRncNumber}"
+                                data-rnc-title="${cleanTitle}"
+                                style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; padding: 8px 12px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;">
+                                ⋮
+                            </button>
+                        ` : ''}
                     </td>
                 </tr>
             `;
@@ -3638,13 +3681,64 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
         
         // Obter ações baseadas na aba
         function getActionsForTab(rnc, tab) {
-            // Para aba de finalizados, manter ações mínimas
+            // Para aba de finalizados, manter ações mínimas + botões admin
             if (tab !== 'active') {
-                return `
+                // Debug: verificar valores
+                console.log('🔍 DEBUG getActionsForTab:', {
+                    tab: tab,
+                    isAdmin: window.isAdmin,
+                    rncId: rnc.id,
+                    rncNumber: rnc.rnc_number
+                });
+                
+                let buttons = `
                     <button onclick="window.location.href='/rnc/${rnc.id}'" class="action-btn btn-view"> Ver</button>
-                    <button onclick="window.location.href='/rnc/${rnc.id}/chat'" class="action-btn btn-chat" title="Histórico de Mensagens">� Histórico</button>
-                    <button onclick="window.location.href='/rnc/${rnc.id}/reply'" class="action-btn btn-reply"> Responder</button>
                 `;
+                
+                // Botão "Mais Opções" para ADMIN em RNCs finalizadas
+                if (window.isAdmin && tab === 'finalized') {
+                    console.log('✅ Adicionando botão Mais Opções para RNC:', rnc.id);
+                    buttons += `
+                        <div class="dropdown-container" style="position: relative; display: inline-block;">
+                            <button onclick="toggleDropdown(${rnc.id})" class="action-btn btn-secondary" title="Mais Opções" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: white;">
+                                ⚙️ Mais Opções
+                            </button>
+                            <div id="dropdown-${rnc.id}" class="dropdown-menu" style="display: none; position: absolute; top: 100%; right: 0; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; min-width: 180px; margin-top: 5px;">
+                                <button 
+                                    class="dropdown-item dropdown-renumber-btn" 
+                                    data-rnc-id="${rnc.id}"
+                                    data-rnc-number="${rnc.rnc_number}"
+                                    data-dropdown-id="${rnc.id}"
+                                    style="width: 100%; text-align: left; padding: 12px 16px; border: none; background: none; cursor: pointer; display: flex; align-items: center; gap: 8px; color: #333; font-size: 14px; transition: background 0.2s;" 
+                                    onmouseover="this.style.background='#f3f4f6'" 
+                                    onmouseout="this.style.background='none'">
+                                    <span style="font-size: 18px;">🔢</span>
+                                    <span>Renumerar RNC</span>
+                                </button>
+                                <button 
+                                    class="dropdown-item dropdown-delete-btn" 
+                                    data-rnc-id="${rnc.id}"
+                                    data-rnc-number="${rnc.rnc_number}"
+                                    data-rnc-title="${rnc.title || ''}"
+                                    data-dropdown-id="${rnc.id}"
+                                    style="width: 100%; text-align: left; padding: 12px 16px; border: none; background: none; cursor: pointer; display: flex; align-items: center; gap: 8px; color: #dc2626; font-size: 14px; transition: background 0.2s; border-top: 1px solid #f3f4f6;" 
+                                    onmouseover="this.style.background='#fef2f2'" 
+                                    onmouseout="this.style.background='none'">
+                                    <span style="font-size: 18px;">⚠️</span>
+                                    <span>Apagar Permanentemente</span>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    console.log('❌ Condição NÃO atendida:', {
+                        isAdmin: window.isAdmin,
+                        tab: tab,
+                        expected: 'finalized'
+                    });
+                }
+                
+                return buttons;
             }
 
             const isCreator = rnc.is_creator || (window.currentUserId && rnc.user_id && String(rnc.user_id) === String(window.currentUserId));
@@ -3795,6 +3889,444 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                 loadRNCs(currentTab);
             }
         }
+        
+        // ============================================
+        // FUNÇÕES ADMIN: RENUMERAR E APAGAR PERMANENTEMENTE
+        // ============================================
+        
+        // Função para renumerar RNC (ADMIN)
+        async function renumberRNC(rncId, currentNumber) {
+            console.log('📝 renumberRNC chamado:', { 
+                rncId, 
+                currentNumber,
+                type_rncId: typeof rncId,
+                rncId_value: rncId
+            });
+            
+            // Validação crítica: rncId DEVE ser válido
+            if (!rncId || rncId === 'null' || rncId === 'undefined' || isNaN(parseInt(rncId))) {
+                console.error('❌ ERRO: rncId inválido!', { 
+                    rncId, 
+                    type: typeof rncId,
+                    parsed: parseInt(rncId)
+                });
+                showNotification('❌ Erro: ID da RNC inválido. Por favor, recarregue a página e tente novamente.', 'error');
+                return;
+            }
+            
+            // Garantir que rncId é número
+            rncId = parseInt(rncId);
+            
+            // Se currentNumber não foi passado, usar o número armazenado no modal
+            const rncNumber = currentNumber || currentAdminRncNumber;
+            const rncNumberNumeric = String(rncNumber || '').replace(/^RNC-/i, '').trim();
+            
+            const newNumber = prompt(`Renumerar RNC ${rncNumberNumeric}\n\nDigite o novo número da RNC:`, rncNumberNumeric);
+            
+            if (!newNumber || newNumber.trim() === '' || newNumber === rncNumber) {
+                return; // Cancelado ou sem mudança
+            }
+             
+            if (!confirm(`Confirma renumerar de "${rncNumberNumeric}" para "${newNumber}"?`)) {
+                return;
+            }
+            
+            try {
+                // Usar endpoint estável sem sufixo - compatível com proxy/NGINX
+                const url = `/api/rnc/${rncId}/renumber`;
+                console.log(`🔄 Renumerando RNC ${rncId} de "${rncNumber}" para "${newNumber}"`);
+                console.log('📍 Location origin:', window.location.origin);
+                console.log('📍 Location href:', window.location.href);
+                console.log('📍 Full URL:', window.location.origin + url);
+                console.log('📍 Relative URL:', url);
+                
+                let response = await fetch(url, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: JSON.stringify({
+                        new_number: String(newNumber).trim()
+                    })
+                });
+                
+                console.log('📥 Response status:', response.status);
+                console.log('📥 Response URL:', response.url);
+                console.log('📥 Response type:', response.type);
+                console.log('📥 Response redirected:', response.redirected);
+                console.log('📥 Response headers (server):', response.headers.get('server'));
+                console.log('📥 Response headers (via):', response.headers.get('via'));
+
+                // Fallback: se 404/405, tentar endpoint alternativo (-v2)
+                if (response.status === 404 || response.status === 405) {
+                    console.error('⚠️ ERRO 405 - Headers completos:', [...response.headers.entries()]);
+                    const altUrl = `/api/rnc/${rncId}/renumber-v2`;
+                    console.warn(`⚠️ Tentando endpoint alternativo: ${altUrl}`);
+                    response = await fetch(altUrl, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        },
+                        body: JSON.stringify({ new_number: String(newNumber).trim() })
+                    });
+                    console.log('📥 Alt Response status:', response.status);
+                    console.log('📥 Alt Response URL:', response.url);
+                }
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('❌ Erro HTTP:', response.status);
+                    console.error('❌ Erro URL:', response.url);
+                    console.error('❌ Erro Text:', errorText.substring(0, 200));
+                    console.error('❌ Server header:', response.headers.get('server'));
+                    throw new Error(`Erro HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+                }
+                
+                const data = await response.json();
+                console.log('✅ Data:', data);
+                
+                if (data.success) {
+                    showNotification(`✅ ${data.message}`, 'success');
+                    loadRNCs(currentTab); // Recarregar a lista
+                } else {
+                    showNotification(`❌ Erro: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                console.error('❌ Erro ao renumerar RNC:', error);
+                showNotification(`❌ Erro ao renumerar RNC: ${error.message}`, 'error');
+            }
+        }
+
+        // Função para apagar RNC permanentemente (ADMIN)
+        async function permanentDeleteRNC(rncId, rncNumber, rncTitle) {
+            console.log('🗑️ permanentDeleteRNC chamado:', { 
+                rncId, 
+                rncNumber, 
+                rncTitle,
+                type_rncId: typeof rncId,
+                currentAdminRncId,
+                currentAdminRncNumber,
+                currentAdminRncTitle
+            });
+            
+            // Validação crítica: rncId DEVE ser válido
+            if (!rncId || rncId === 'null' || rncId === 'undefined' || isNaN(parseInt(rncId))) {
+                console.error('❌ ERRO: rncId inválido para delete!', { 
+                    rncId, 
+                    type: typeof rncId,
+                    parsed: parseInt(rncId)
+                });
+                showNotification('❌ Erro: ID da RNC inválido. Por favor, recarregue a página e tente novamente.', 'error');
+                return;
+            }
+            
+            // Garantir que rncId é número
+            rncId = parseInt(rncId);
+            
+            // Se não foram passados, usar os valores armazenados no modal
+            const finalRncNumber = rncNumber || currentAdminRncNumber;
+            const finalRncTitle = rncTitle || currentAdminRncTitle;
+            
+            // Extrair apenas o número sem "RNC-" para o prompt
+            const rncNumberOnly = finalRncNumber?.replace(/^RNC-/i, '').trim() || 'null';
+            
+            if (!confirm(`⚠️ ATENÇÃO: APAGAR PERMANENTEMENTE?\n\nRNC: ${finalRncNumber}\nTítulo: ${finalRncTitle}\n\nEsta ação é IRREVERSÍVEL e apagará a RNC do banco de dados!\n\nTem certeza?`)) {
+                return;
+            }
+            
+            // Confirmação dupla para segurança - APENAS o número (sem RNC-)
+            const confirmation = prompt(`Para confirmar, digite o número da RNC: ${rncNumberOnly}`);
+            
+            if (!confirmation || confirmation.trim() === '') {
+                showNotification('❌ Operação cancelada.', 'info');
+                return;
+            }
+            
+            // Normalizar a confirmação para aceitar com ou sem "RNC-"
+            const normalizedConfirmation = confirmation.trim().replace(/^RNC-/i, '');
+            
+            if (normalizedConfirmation !== rncNumberOnly) {
+                showNotification('❌ Confirmação incorreta. Operação cancelada.', 'error');
+                return;
+            }
+            
+            try {
+                console.log(`🗑️ Apagando permanentemente RNC ${finalRncNumber} (ID: ${rncId})`);
+                
+                // Remover da interface imediatamente (optimistic update)
+                removeRNCFromInterface(rncId);
+                
+                const response = await fetch(`/api/rnc/${rncId}/permanent-delete`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: JSON.stringify({ action: 'delete' })
+                });
+                
+                console.log('📥 Delete response status:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('❌ Erro HTTP:', response.status, errorText);
+                    throw new Error(`Erro HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+                }
+                
+                const data = await response.json();
+                console.log('✅ Delete data:', data);
+                
+                if (data.success) {
+                    console.log(`✅ RNC ${finalRncNumber} apagado permanentemente`);
+                    
+                    // Atualizar dados locais
+                    if (rncsData.finalized) {
+                        rncsData.finalized = rncsData.finalized.filter(rnc => rnc.id != rncId);
+                    }
+                    if (rncsData.active) {
+                        rncsData.active = rncsData.active.filter(rnc => rnc.id != rncId);
+                    }
+                    {% if user_permissions.canViewEngineeringRncs %}
+                    if (rncsData.engenharia) {
+                        rncsData.engenharia = rncsData.engenharia.filter(rnc => rnc.id != rncId);
+                    }
+                    {% endif %}
+                    
+                    // Atualizar contadores
+                    updateCounts();
+                    
+                    showNotification(`✅ ${data.message}`, 'success');
+                } else {
+                    console.error(`❌ Erro ao apagar RNC:`, data.message);
+                    showNotification(`❌ Erro: ${data.message}`, 'error');
+                    loadRNCs(currentTab); // Recarregar em caso de erro
+                }
+            } catch (error) {
+                console.error('❌ Erro ao apagar RNC permanentemente:', error);
+                showNotification(`❌ Erro ao apagar RNC: ${error.message}`, 'error');
+                loadRNCs(currentTab); // Recarregar em caso de erro
+            }
+        }
+        
+        // ============================================
+        // MODAL DE OPÇÕES ADMINISTRATIVAS
+        // ============================================
+        let currentAdminRncId = null;
+        let currentAdminRncNumber = null;
+        let currentAdminRncTitle = null;
+        
+        function openAdminOptionsModal(rncId, rncNumber, rncTitle) {
+            console.log('🔍 openAdminOptionsModal chamado:', {
+                rncId: rncId,
+                rncNumber: rncNumber,
+                rncTitle: rncTitle,
+                type_rncId: typeof rncId,
+                type_rncNumber: typeof rncNumber,
+                type_rncTitle: typeof rncTitle,
+                rncId_stringified: String(rncId),
+                rncId_is_null: rncId === null,
+                rncId_is_undefined: rncId === undefined,
+                rncId_is_empty_string: rncId === ''
+            });
+            
+            // Validação crítica: rncId DEVE ser um número válido
+            if (!rncId || rncId === 'null' || rncId === 'undefined' || isNaN(parseInt(rncId))) {
+                console.error('❌ ERRO CRÍTICO: rncId inválido!', { 
+                    rncId,
+                    stackTrace: new Error().stack
+                });
+                showNotification('❌ Erro: ID da RNC inválido. Por favor, recarregue a página.', 'error');
+                return;
+            }
+            
+            currentAdminRncId = parseInt(rncId); // Garantir que é número
+            currentAdminRncNumber = rncNumber || `RNC-${rncId}`;
+            currentAdminRncTitle = rncTitle || 'Sem título';
+            
+            console.log('✅ Variáveis globais atualizadas:', {
+                currentAdminRncId,
+                currentAdminRncNumber,
+                currentAdminRncTitle,
+                typeOfId: typeof currentAdminRncId,
+                isValidNumber: !isNaN(currentAdminRncId)
+            });
+            
+            // Verificação imediata
+            if (!currentAdminRncId || isNaN(currentAdminRncId)) {
+                console.error('❌ ERRO CRÍTICO: Variável global ficou inválida após atribuição!', {
+                    original_rncId: rncId,
+                    parsed: parseInt(rncId),
+                    current: currentAdminRncId
+                });
+            }
+            
+            document.getElementById('adminModalRncNumber').textContent = currentAdminRncNumber;
+            document.getElementById('adminModalRncTitle').textContent = currentAdminRncTitle;
+            
+            const modal = document.getElementById('adminOptionsModal');
+            modal.style.display = 'flex';
+            
+            // Fechar ao clicar fora
+            modal.onclick = function(event) {
+                if (event.target === modal) {
+                    closeAdminOptionsModal();
+                }
+            };
+        }
+        
+        function closeAdminOptionsModal() {
+            const modal = document.getElementById('adminOptionsModal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+            
+            // IMPORTANTE: Aguardar um pouco antes de limpar para permitir que os handlers completem
+            setTimeout(() => {
+                console.log('🔄 Limpando variáveis globais após fechar modal');
+                currentAdminRncId = null;
+                currentAdminRncNumber = null;
+                currentAdminRncTitle = null;
+            }, 100);
+        }
+        
+        // Event listener delegado para botões de opções administrativas
+        document.addEventListener('click', function(event) {
+            const btn = event.target.closest('.admin-options-btn');
+            if (btn) {
+                event.preventDefault();
+                event.stopPropagation();
+                
+                const rncId = btn.getAttribute('data-rnc-id');
+                const rncNumber = btn.getAttribute('data-rnc-number');
+                const rncTitle = btn.getAttribute('data-rnc-title');
+                
+                console.log('🖱️ Clique no botão admin detectado:', {
+                    rncId,
+                    rncNumber,
+                    rncTitle,
+                    btnElement: btn,
+                    allAttributes: {
+                        'data-rnc-id': btn.getAttribute('data-rnc-id'),
+                        'data-rnc-number': btn.getAttribute('data-rnc-number'),
+                        'data-rnc-title': btn.getAttribute('data-rnc-title'),
+                        'class': btn.className,
+                        'innerHTML': btn.innerHTML.substring(0, 50)
+                    },
+                    dataset: btn.dataset
+                });
+                
+                if (!rncId || rncId === 'null' || rncId === 'undefined') {
+                    console.error('❌ CRÍTICO: Botão sem data-rnc-id válido!', {
+                        btn,
+                        outerHTML: btn.outerHTML.substring(0, 200)
+                    });
+                    showNotification('❌ Erro: Botão mal configurado. Recarregue a página.', 'error');
+                    return;
+                }
+                
+                openAdminOptionsModal(rncId, rncNumber, rncTitle);
+            }
+            
+            // Event listener para botão de renumerar no dropdown
+            const renumberBtn = event.target.closest('.dropdown-renumber-btn');
+            if (renumberBtn) {
+                event.preventDefault();
+                event.stopPropagation();
+                
+                const rncId = renumberBtn.getAttribute('data-rnc-id');
+                const rncNumber = renumberBtn.getAttribute('data-rnc-number');
+                const dropdownId = renumberBtn.getAttribute('data-dropdown-id');
+                
+                console.log('🖱️ Clique no botão renumerar (dropdown) detectado:', {
+                    rncId,
+                    rncNumber,
+                    dropdownId
+                });
+                
+                renumberRNC(rncId, rncNumber);
+                if (dropdownId) closeDropdown(dropdownId);
+            }
+            
+            // Event listener para botão de apagar no dropdown
+            const deleteBtn = event.target.closest('.dropdown-delete-btn');
+            if (deleteBtn) {
+                event.preventDefault();
+                event.stopPropagation();
+                
+                const rncId = deleteBtn.getAttribute('data-rnc-id');
+                const rncNumber = deleteBtn.getAttribute('data-rnc-number');
+                const rncTitle = deleteBtn.getAttribute('data-rnc-title');
+                const dropdownId = deleteBtn.getAttribute('data-dropdown-id');
+                
+                console.log('🖱️ Clique no botão apagar (dropdown) detectado:', {
+                    rncId,
+                    rncNumber,
+                    rncTitle,
+                    dropdownId
+                });
+                
+                permanentDeleteRNC(rncId, rncNumber, rncTitle);
+                if (dropdownId) closeDropdown(dropdownId);
+            }
+        });
+        
+        function handleRenumber() {
+            console.log('🔍 handleRenumber chamado:', {
+                currentAdminRncId: currentAdminRncId,
+                currentAdminRncNumber: currentAdminRncNumber,
+                currentAdminRncTitle: currentAdminRncTitle
+            });
+            
+            if (!currentAdminRncId || !currentAdminRncNumber) {
+                console.error('❌ Erro: IDs não definidos!', {
+                    currentAdminRncId,
+                    currentAdminRncNumber
+                });
+                showNotification('❌ Erro: RNC não identificada. Por favor, tente novamente.', 'error');
+                closeAdminOptionsModal();
+                return;
+            }
+            
+            closeAdminOptionsModal();
+            renumberRNC(currentAdminRncId, currentAdminRncNumber);
+        }
+        
+        function handleDelete() {
+            console.log('🔍 handleDelete chamado:', {
+                currentAdminRncId: currentAdminRncId,
+                currentAdminRncNumber: currentAdminRncNumber,
+                currentAdminRncTitle: currentAdminRncTitle
+            });
+            
+            if (!currentAdminRncId || !currentAdminRncNumber) {
+                console.error('❌ Erro: IDs não definidos para delete!', {
+                    currentAdminRncId,
+                    currentAdminRncNumber,
+                    currentAdminRncTitle
+                });
+                showNotification('❌ Erro: RNC não identificada. Por favor, tente novamente.', 'error');
+                closeAdminOptionsModal();
+                return;
+            }
+            
+            closeAdminOptionsModal();
+            permanentDeleteRNC(currentAdminRncId, currentAdminRncNumber, currentAdminRncTitle);
+        }
+        
+        // Fechar modal com ESC
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeAdminOptionsModal();
+            }
+        });
         
         // ============================================
         // FUNÇÕES DE RENUMERAÇÃO (SOMENTE ADMIN)
@@ -16758,6 +17290,58 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                 }, 700);
             });
     </script>
+
+    <!-- Modal de Opções Administrativas -->
+    <div id="adminOptionsModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 10000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 12px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); max-width: 450px; width: 90%; animation: slideIn 0.3s ease;">
+            <div style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; padding: 20px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; font-size: 18px; font-weight: 600;">⚙️ Opções Administrativas</h3>
+                <button onclick="closeAdminOptionsModal()" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; opacity: 0.8; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">×</button>
+            </div>
+            <div style="padding: 24px;">
+                <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #6366f1;">
+                    <div style="font-size: 14px; color: #666; margin-bottom: 4px;">RNC Selecionada:</div>
+                    <div style="font-size: 16px; font-weight: 600; color: #333;" id="adminModalRncNumber"></div>
+                    <div style="font-size: 13px; color: #666; margin-top: 4px; line-height: 1.4;" id="adminModalRncTitle"></div>
+                </div>
+                
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <button onclick="handleRenumber()" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white; border: none; padding: 16px 20px; border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 12px; transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(245, 158, 11, 0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(245, 158, 11, 0.3)'">
+                        <span style="font-size: 24px;">🔢</span>
+                        <div style="text-align: left; flex: 1;">
+                            <div>Renumerar RNC</div>
+                            <div style="font-size: 12px; opacity: 0.9; font-weight: 400;">Alterar o número desta RNC</div>
+                        </div>
+                    </button>
+                    
+                    <button onclick="handleDelete()" style="background: linear-gradient(135deg, #dc2626, #991b1b); color: white; border: none; padding: 16px 20px; border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 12px; transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(220, 38, 38, 0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(220, 38, 38, 0.3)'">
+                        <span style="font-size: 24px;">⚠️</span>
+                        <div style="text-align: left; flex: 1;">
+                            <div>Apagar Permanentemente</div>
+                            <div style="font-size: 12px; opacity: 0.9; font-weight: 400;">Remover esta RNC do sistema</div>
+                        </div>
+                    </button>
+                </div>
+                
+                <button onclick="closeAdminOptionsModal()" style="margin-top: 20px; width: 100%; background: #e5e7eb; color: #4b5563; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;" onmouseover="this.style.background='#d1d5db'" onmouseout="this.style.background='#e5e7eb'">
+                    Cancelar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        @keyframes slideIn {
+            from {
+                transform: translateY(-30px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+    </style>
 
 </body>
 </html>
