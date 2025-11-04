@@ -2,6 +2,7 @@ import logging
 import sqlite3
 import json
 import threading
+import time
 from datetime import datetime
 from flask import Blueprint, request, jsonify, render_template, redirect, session, current_app
 
@@ -36,6 +37,120 @@ except Exception:
             return f
         return _d
 logger = logging.getLogger('ippel.rnc')
+
+
+# === Utilitário: remover UNIQUE(rnc_number) automaticamente (sem scripts externos) ===
+def _ensure_rncs_allows_duplicates(max_attempts: int = 3) -> bool:
+    """Garante que a tabela rncs NÃO possui UNIQUE constraint em rnc_number.
+
+    - Detecta pelo SQL do schema em sqlite_master
+    - Se existir, recria a tabela preservando colunas/DDL básicas e remove UNIQUE
+    - Não requer scripts externos; roda dentro do servidor
+    - Retorna True se já não havia UNIQUE ou se migrou com sucesso
+    """
+    try:
+        for attempt in range(1, max_attempts + 1):
+            conn = None
+            try:
+                conn = sqlite3.connect(DB_PATH, timeout=60.0)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=15000")
+                cur = conn.cursor()
+
+                # Verificar SQL da tabela
+                cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='rncs'")
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    # Sem definição? não faz nada
+                    conn.close()
+                    return True
+                create_sql = row[0]
+                lowered = create_sql.lower()
+                if ('unique' not in lowered) or ('rnc_number' not in lowered):
+                    conn.close()
+                    return True  # nada para fazer
+
+                logger.warning("⚠️ UNIQUE(rnc_number) detectado no schema — iniciando migração automática para permitir duplicatas…")
+
+                # Preparar metadados de colunas para recriar tabela preservando tipos/defaults
+                cur.execute("PRAGMA table_info(rncs)")
+                cols = cur.fetchall()  # (cid, name, type, notnull, dflt_value, pk)
+                if not cols:
+                    conn.close()
+                    return False
+
+                column_defs = []
+                col_names = []
+                for (_cid, name, col_type, notnull, dflt, pk) in cols:
+                    col_names.append(name)
+                    if name == 'id':
+                        column_defs.append('id INTEGER PRIMARY KEY AUTOINCREMENT')
+                        continue
+                    t = (col_type or 'TEXT').strip()
+                    # Remover "UNIQUE" que às vezes aparece embutido no tipo
+                    t = t.replace('UNIQUE', '').replace('unique', '').strip()
+                    parts = [f'{name} {t}']
+                    if notnull:
+                        parts.append('NOT NULL')
+                    if dflt is not None and str(dflt).strip() != '':
+                        # dflt já vem no formato SQL (com aspas quando necessário)
+                        parts.append(f'DEFAULT {dflt}')
+                    column_defs.append(' '.join(parts))
+
+                col_list = ', '.join(col_names)
+                new_create = f"CREATE TABLE rncs (\n  {', '.join(column_defs)}\n)"
+
+                # Iniciar transação exclusiva
+                cur.execute('PRAGMA foreign_keys = OFF')
+                cur.execute('BEGIN IMMEDIATE')
+                cur.execute('ALTER TABLE rncs RENAME TO rncs_old')
+                cur.execute(new_create)
+                cur.execute(f'INSERT INTO rncs ({col_list}) SELECT {col_list} FROM rncs_old')
+
+                # Recriar índices não-únicos anteriores
+                try:
+                    cur.execute("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='rncs' AND sql IS NOT NULL")
+                    for idx_name, idx_sql in cur.fetchall():
+                        if idx_sql and ('unique' in idx_sql.lower()):
+                            # pular índices únicos
+                            continue
+                        if idx_sql:
+                            cur.execute(idx_sql)
+                except Exception as _idx_e:
+                    logger.warning(f"Não foi possível recriar alguns índices: {_idx_e}")
+
+                cur.execute('DROP TABLE rncs_old')
+                cur.execute('PRAGMA foreign_keys = ON')
+                conn.commit()
+                conn.close()
+                logger.info("✅ Migração concluída: UNIQUE(rnc_number) removida — duplicatas agora são permitidas.")
+                return True
+            except sqlite3.OperationalError as e:
+                if conn:
+                    try:
+                        conn.rollback(); conn.close()
+                    except Exception:
+                        pass
+                msg = str(e).lower()
+                if ('locked' in msg) or ('busy' in msg):
+                    # backoff e tentar novamente
+                    time.sleep(0.6 * attempt)
+                    continue
+                else:
+                    logger.error(f"Erro ao migrar schema para remover UNIQUE: {e}")
+                    return False
+            except Exception as e:
+                if conn:
+                    try:
+                        conn.rollback(); conn.close()
+                    except Exception:
+                        pass
+                logger.error(f"Falha ao garantir duplicatas em rncs: {e}")
+                return False
+        return False
+    except Exception as outer:
+        logger.error(f"Erro inesperado no utilitário de migração UNIQUE→DUPLICATES: {outer}")
+        return False
 
 
 @rnc.route('/api/rnc/next-number', methods=['GET'])
@@ -126,33 +241,143 @@ def renumber_rnc(rnc_id):
         if not str(new_number).isdigit():
             return jsonify({'success': False, 'message': 'Número deve conter apenas dígitos'}), 400
         
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        # Retry logic para evitar "database is locked"
+        max_attempts = 5
+        attempt = 0
+        success = False
+        old_number = None
+        status = None
+        existing_count = 0
         
-        # Verificar se a RNC existe
-        cursor.execute('SELECT rnc_number, status FROM rncs WHERE id = ?', (rnc_id,))
-        rnc_data = cursor.fetchone()
+        while attempt < max_attempts and not success:
+            attempt += 1
+            conn = None
+            try:
+                # Conectar com timeout maior e WAL mode
+                conn = sqlite3.connect(DB_PATH, timeout=30.0, isolation_level=None)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=10000")
+                cursor = conn.cursor()
+                
+                # Usar BEGIN IMMEDIATE para lock exclusivo imediato
+                cursor.execute("BEGIN IMMEDIATE")
+                
+                # Verificar se a RNC existe
+                cursor.execute('SELECT rnc_number, status FROM rncs WHERE id = ?', (rnc_id,))
+                rnc_data = cursor.fetchone()
+                
+                if not rnc_data:
+                    conn.rollback()
+                    conn.close()
+                    return jsonify({'success': False, 'message': 'RNC não encontrada'}), 404
+                
+                old_number = rnc_data[0]
+                status = rnc_data[1]
+                
+                # STANDBY MODE: UNIQUE constraint removida - números duplicados permitidos
+                cursor.execute('SELECT COUNT(*) FROM rncs WHERE rnc_number = ?', (str(new_number),))
+                existing_count = cursor.fetchone()[0]
+                
+                if existing_count > 0:
+                    logger.warning(f"⚠️ STANDBY MODE: Criando duplicata - já existe {existing_count} RNC(s) com número {new_number}")
+                
+                # Atualizar diretamente (sem constraint UNIQUE)
+                cursor.execute('UPDATE rncs SET rnc_number = ? WHERE id = ?', (str(new_number), rnc_id))
+                conn.commit()
+                conn.close()
+                success = True
+                
+            except sqlite3.IntegrityError as e:
+                # Se ocorrer UNIQUE(rnc_number), executar migração in-process para permitir duplicatas
+                error_msg = str(e).lower()
+                if conn:
+                    try:
+                        conn.rollback(); conn.close()
+                    except Exception:
+                        pass
+
+                if 'unique' in error_msg and 'rnc_number' in error_msg:
+                    logger.warning("⚠️ UNIQUE(rnc_number) bloqueando renumeração — aplicando migração automática no schema…")
+                    migrated = _ensure_rncs_allows_duplicates()
+                    if not migrated:
+                        if attempt < max_attempts:
+                            time.sleep(0.4 * attempt)
+                            continue
+                        return jsonify({
+                            'success': False,
+                            'message': 'Não foi possível ajustar o schema para permitir números duplicados.'
+                        }), 500
+                    # Tentar novamente a atualização após migração
+                    try:
+                        conn = sqlite3.connect(DB_PATH, timeout=30.0, isolation_level=None)
+                        conn.execute("PRAGMA journal_mode=WAL")
+                        conn.execute("PRAGMA busy_timeout=10000")
+                        cur2 = conn.cursor()
+                        cur2.execute('BEGIN IMMEDIATE')
+                        cur2.execute('UPDATE rncs SET rnc_number = ? WHERE id = ?', (str(new_number), rnc_id))
+                        conn.commit(); conn.close()
+                        success = True
+                        existing_count += 1
+                        logger.info(f"✅ Renumeração concluída após migração: {old_number} → {new_number}")
+                        break
+                    except Exception as inner2:
+                        try:
+                            conn.rollback(); conn.close()
+                        except Exception:
+                            pass
+                        if attempt < max_attempts:
+                            time.sleep(0.4 * attempt)
+                            continue
+                        return jsonify({
+                            'success': False,
+                            'message': f'Erro após migração: {str(inner2)}'
+                        }), 500
+                else:
+                    raise  # Outros erros de integridade
+                    
+            except sqlite3.OperationalError as e:
+                error_msg = str(e).lower()
+                if conn:
+                    try:
+                        conn.rollback()
+                        conn.close()
+                    except:
+                        pass
+                
+                if 'locked' in error_msg or 'busy' in error_msg:
+                    if attempt < max_attempts:
+                        import time
+                        wait_time = 0.5 * attempt  # Backoff exponencial
+                        logger.warning(f"⚠️ Database locked na tentativa {attempt}/{max_attempts}, aguardando {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"❌ Database permanece locked após {max_attempts} tentativas")
+                        return jsonify({
+                            'success': False,
+                            'message': 'Banco de dados ocupado. Tente novamente em alguns segundos.'
+                        }), 503
+                else:
+                    raise  # Re-raise se não for erro de lock
+            except Exception as e:
+                if conn:
+                    try:
+                        conn.rollback()
+                        conn.close()
+                    except:
+                        pass
+                raise  # Re-raise outras exceções
         
-        if not rnc_data:
-            conn.close()
-            return jsonify({'success': False, 'message': 'RNC não encontrada'}), 404
-        
-        old_number = rnc_data[0]
-        status = rnc_data[1]
-        
-        # Verificar se o novo número já existe
-        cursor.execute('SELECT id FROM rncs WHERE rnc_number = ? AND id != ?', (str(new_number), rnc_id))
-        if cursor.fetchone():
-            conn.close()
+        if not success:
             return jsonify({
                 'success': False,
-                'message': f'O número {new_number} já está em uso por outra RNC'
-            }), 400
+                'message': 'Não foi possível renumerar a RNC após múltiplas tentativas'
+            }), 503
         
-        # Atualizar o número
-        cursor.execute('UPDATE rncs SET rnc_number = ? WHERE id = ?', (str(new_number), rnc_id))
-        conn.commit()
-        conn.close()
+        if existing_count > 0:
+            logger.warning(f"✅ DUPLICATA CRIADA: {existing_count + 1} RNCs agora têm número {new_number}")
+        else:
+            logger.info(f"✅ RNC renumerada: {old_number} → {new_number} (sem duplicata)")
         
         # Limpar cache
         clear_rnc_cache()
@@ -1255,21 +1480,18 @@ def view_rnc(rnc_id):
                    u.department as user_department,
                    au.department as assigned_user_department,
                    g.name as area_responsavel_name,
-                   CASE 
-                       WHEN r.responsavel GLOB '[0-9]*' 
-                       THEN (SELECT name FROM users WHERE id = CAST(r.responsavel AS INTEGER))
-                       ELSE r.responsavel 
-                   END as responsavel_name,
-                   CASE 
-                       WHEN r.inspetor GLOB '[0-9]*' 
-                       THEN (SELECT name FROM users WHERE id = CAST(r.inspetor AS INTEGER))
-                       ELSE r.inspetor 
-                   END as inspetor_name,
-                   cu.name as causador_name
+                   r.ass_responsavel as setor_responsavel,
+                   resp_user.name as responsavel_name,
+                   insp_user.name as inspetor_name,
+                   cu.name as causador_name,
+                   gerente_user.name as gerente_grupo_name
             FROM rncs r
             LEFT JOIN users u ON r.user_id = u.id
             LEFT JOIN users au ON r.assigned_user_id = au.id
             LEFT JOIN groups g ON g.id = CAST(r.area_responsavel AS INTEGER)
+            LEFT JOIN users gerente_user ON g.manager_user_id = gerente_user.id
+            LEFT JOIN users resp_user ON resp_user.id = CAST(r.responsavel AS INTEGER)
+            LEFT JOIN users insp_user ON insp_user.id = CAST(r.inspetor AS INTEGER)
             LEFT JOIN users cu ON r.causador_user_id = cu.id
             WHERE r.id = ?
         ''', (rnc_id,))
@@ -1300,7 +1522,7 @@ def view_rnc(rnc_id):
                 'position','cv','conjunto','modelo','description_drawing','purchase_order','assigned_group_id','causador_user_id'
             ]
 
-        columns = base_columns + ['user_name', 'assigned_user_name', 'user_department', 'assigned_user_department', 'area_responsavel_name', 'responsavel_name', 'inspetor_name', 'causador_name']
+        columns = base_columns + ['user_name', 'assigned_user_name', 'user_department', 'assigned_user_department', 'area_responsavel_name', 'setor_responsavel', 'responsavel_name', 'inspetor_name', 'causador_name', 'gerente_grupo_name']
 
         if len(rnc_data) < len(columns):
             rnc_data = list(rnc_data) + [None] * (len(columns) - len(rnc_data))
@@ -1348,10 +1570,22 @@ def reply_rnc(rnc_id):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT r.*, u.name as user_name, au.name as assigned_user_name
+            SELECT r.*, 
+                   u.name as user_name, 
+                   au.name as assigned_user_name,
+                   g.name as area_responsavel_name,
+                   resp_user.name as responsavel_name,
+                   insp_user.name as inspetor_name,
+                   causador_u.name as causador_name,
+                   gerente_user.name as gerente_grupo_name
               FROM rncs r
               LEFT JOIN users u ON r.user_id = u.id
               LEFT JOIN users au ON r.assigned_user_id = au.id
+              LEFT JOIN groups g ON g.id = CAST(r.area_responsavel AS INTEGER)
+              LEFT JOIN users gerente_user ON g.manager_user_id = gerente_user.id
+              LEFT JOIN users resp_user ON resp_user.id = CAST(r.responsavel AS INTEGER)
+              LEFT JOIN users insp_user ON insp_user.id = CAST(r.inspetor AS INTEGER)
+              LEFT JOIN users causador_u ON r.causador_user_id = causador_u.id
              WHERE r.id = ?
         ''', (rnc_id,))
         rnc_data = cursor.fetchone()
@@ -1392,9 +1626,12 @@ def reply_rnc(rnc_id):
                 'is_deleted','deleted_at','finalized_at','created_at','updated_at','disposition_usar','disposition_retrabalhar',
                 'disposition_rejeitar','disposition_sucata','disposition_devolver_estoque','disposition_devolver_fornecedor',
                 'inspection_aprovado','inspection_reprovado','inspection_ver_rnc','signature_inspection_date','signature_engineering_date',
-                'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name','price'
+                'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name','price',
+                'department','instruction_retrabalho','cause_rnc','action_rnc','responsavel','inspetor','setor','material','quantity',
+                'drawing','area_responsavel','ass_responsavel','mp','revision','position','cv','conjunto','modelo','description_drawing',
+                'purchase_order','assigned_group_id','causador_user_id'
             ]
-        columns = base_columns + ['user_name', 'assigned_user_name']
+        columns = base_columns + ['user_name', 'assigned_user_name', 'area_responsavel_name', 'responsavel_name', 'inspetor_name', 'causador_name', 'gerente_grupo_name']
 
         if len(rnc_data) < len(columns):
             rnc_data = list(rnc_data) + [None] * (len(columns) - len(rnc_data))
@@ -1420,6 +1657,19 @@ def reply_rnc(rnc_id):
         
         # Extrair campos de texto da descrição
         txt_fields = parse_label_map(rnc_dict.get('description') or '')
+        
+        # LOG DE DEBUG: Verificar campos carregados
+        logger.info(f"🔍 DEBUG reply_rnc RNC #{rnc_id}:")
+        logger.info(f"  - area_responsavel: {rnc_dict.get('area_responsavel')}")
+        logger.info(f"  - area_responsavel_name: {rnc_dict.get('area_responsavel_name')}")
+        logger.info(f"  - responsavel: {rnc_dict.get('responsavel')}")
+        logger.info(f"  - responsavel_name: {rnc_dict.get('responsavel_name')}")
+        logger.info(f"  - inspetor: {rnc_dict.get('inspetor')}")
+        logger.info(f"  - inspetor_name: {rnc_dict.get('inspetor_name')}")
+        logger.info(f"  - causador_user_id: {rnc_dict.get('causador_user_id')}")
+        logger.info(f"  - causador_name: {rnc_dict.get('causador_name')}")
+        logger.info(f"  - ass_responsavel: {rnc_dict.get('ass_responsavel')}")
+        logger.info(f"  - setor: {rnc_dict.get('setor')}")
         
         # Buscar lista de clientes do banco de dados
         clients = []
@@ -1804,6 +2054,7 @@ def update_rnc_api(rnc_id):
         from services.permissions import has_permission
         from services.cache import clear_rnc_cache, query_cache, cache_lock
         from routes.field_locks import get_user_locked_fields
+        from services.groups import get_users_by_group
         
         # Validar campos bloqueados NO CONTEXTO DE RESPOSTA
         data = request.get_json() or {}
@@ -1925,6 +2176,48 @@ def update_rnc_api(rnc_id):
         if not new_title and new_description:
             new_title = new_description[:100]
         
+        # Extrair causador_user_id e ass_responsavel do payload
+        causador_user_id = data.get('causador_user_id')
+        if causador_user_id:
+            causador_user_id = str(causador_user_id).strip()
+            if not causador_user_id or causador_user_id in ('', 'null', 'undefined'):
+                causador_user_id = None
+            else:
+                try:
+                    causador_user_id = int(causador_user_id)
+                except:
+                    causador_user_id = None
+        else:
+            causador_user_id = current.get('causador_user_id')
+        
+        # Preservar ass_responsavel se vier vazio
+        ass_responsavel_new = data.get('ass_responsavel')
+        if ass_responsavel_new and str(ass_responsavel_new).strip() not in ('', 'null', 'undefined'):
+            ass_responsavel = ass_responsavel_new
+        else:
+            ass_responsavel = current.get('ass_responsavel', '')
+        
+        # LOG DEBUG: Verificar valores recebidos do frontend
+        logger.info(f"🔍 DEBUG UPDATE RNC {rnc_id} - VALORES ASSINATURAS CABEÇALHO:")
+        logger.info(f"   area_responsavel: '{data.get('area_responsavel')}' (atual: '{current.get('area_responsavel')}')")
+        logger.info(f"   ass_responsavel: '{ass_responsavel}' (do payload: '{data.get('ass_responsavel')}')")
+        logger.info(f"   inspetor: '{data.get('inspetor')}' (atual: '{current.get('inspetor')}')")
+        logger.info(f"   responsavel: '{data.get('responsavel')}' (atual: '{current.get('responsavel')}')")
+        logger.info(f"   causador_user_id: '{causador_user_id}'")
+        logger.info(f"   nome_responsavel (do payload): '{data.get('nome_responsavel')}'")
+        
+        # Calcular valores finais que serão salvos (com preservação de valores vazios)
+        final_responsavel = data.get('responsavel') if data.get('responsavel') not in (None, '', 'null', 'undefined') else current.get('responsavel','')
+        final_inspetor = data.get('inspetor') if data.get('inspetor') not in (None, '', 'null', 'undefined') else current.get('inspetor','')
+        final_area_resp = data.get('area_responsavel') if data.get('area_responsavel') not in (None, '', 'null', 'undefined') else current.get('area_responsavel','')
+        
+        logger.info(f"📝 VALORES FINAIS QUE SERÃO SALVOS:")
+        logger.info(f"   area_responsavel: '{final_area_resp}'")
+        logger.info(f"   ass_responsavel: '{ass_responsavel}'")
+        logger.info(f"   inspetor: '{final_inspetor}'")
+        logger.info(f"   responsavel: '{final_responsavel}'")
+        logger.info(f"   causador_user_id: '{causador_user_id}'")
+        
         cursor.execute('''
             UPDATE rncs 
             SET title = ?, description = ?, equipment = ?, client = ?, 
@@ -1942,7 +2235,8 @@ def update_rnc_api(rnc_id):
                 disposition_usar = ?, disposition_retrabalhar = ?, disposition_rejeitar = ?, disposition_sucata = ?,
                 disposition_devolver_estoque = ?, disposition_devolver_fornecedor = ?,
                 inspection_aprovado = ?, inspection_reprovado = ?, inspection_ver_rnc = ?,
-                instruction_retrabalho = ?, cause_rnc = ?, action_rnc = ?
+                instruction_retrabalho = ?, cause_rnc = ?, action_rnc = ?,
+                causador_user_id = ?, ass_responsavel = ?
             WHERE id = ?
         ''', (
             new_title,
@@ -1960,21 +2254,21 @@ def update_rnc_api(rnc_id):
             data.get('signature_inspection_date') or current.get('signature_inspection_date'),
             data.get('signature_engineering_date') or current.get('signature_engineering_date'),
             data.get('signature_inspection2_date') or current.get('signature_inspection2_date'),
-            data.get('conjunto', current.get('conjunto','')),
-            data.get('modelo', current.get('modelo','')),
-            data.get('description_drawing', current.get('description_drawing','')),
-            data.get('quantity', current.get('quantity','')),
-            data.get('material', current.get('material','')),
-            data.get('purchase_order', current.get('purchase_order','')),
-            data.get('responsavel', current.get('responsavel','')),
-            data.get('inspetor', current.get('inspetor','')),
-            data.get('area_responsavel', current.get('area_responsavel','')),
-            data.get('setor', current.get('setor','')),
-            data.get('mp', current.get('mp','')),
-            data.get('revision', current.get('revision','')),
-            data.get('position', current.get('position','')),
-            data.get('cv', current.get('cv','')),
-            data.get('drawing', current.get('drawing','')),
+            data.get('conjunto') if data.get('conjunto') not in (None, '', 'null', 'undefined') else current.get('conjunto',''),
+            data.get('modelo') if data.get('modelo') not in (None, '', 'null', 'undefined') else current.get('modelo',''),
+            data.get('description_drawing') if data.get('description_drawing') not in (None, '', 'null', 'undefined') else current.get('description_drawing',''),
+            data.get('quantity') if data.get('quantity') not in (None, '', 'null', 'undefined') else current.get('quantity',''),
+            data.get('material') if data.get('material') not in (None, '', 'null', 'undefined') else current.get('material',''),
+            data.get('purchase_order') if data.get('purchase_order') not in (None, '', 'null', 'undefined') else current.get('purchase_order',''),
+            data.get('responsavel') if data.get('responsavel') not in (None, '', 'null', 'undefined') else current.get('responsavel',''),
+            data.get('inspetor') if data.get('inspetor') not in (None, '', 'null', 'undefined') else current.get('inspetor',''),
+            data.get('area_responsavel') if data.get('area_responsavel') not in (None, '', 'null', 'undefined') else current.get('area_responsavel',''),
+            data.get('setor') if data.get('setor') not in (None, '', 'null', 'undefined') else current.get('setor',''),
+            data.get('mp') if data.get('mp') not in (None, '', 'null', 'undefined') else current.get('mp',''),
+            data.get('revision') if data.get('revision') not in (None, '', 'null', 'undefined') else current.get('revision',''),
+            data.get('position') if data.get('position') not in (None, '', 'null', 'undefined') else current.get('position',''),
+            data.get('cv') if data.get('cv') not in (None, '', 'null', 'undefined') else current.get('cv',''),
+            data.get('drawing') if data.get('drawing') not in (None, '', 'null', 'undefined') else current.get('drawing',''),
             disposition_usar,
             disposition_retrabalhar,
             disposition_rejeitar,
@@ -1987,9 +2281,78 @@ def update_rnc_api(rnc_id):
             instruction_retrabalho,
             cause_rnc,
             action_rnc,
+            causador_user_id,
+            ass_responsavel,
             rnc_id
         ))
         affected_rows = cursor.rowcount
+        
+        # ATUALIZAR assigned_group_id se area_responsavel mudou
+        if final_area_resp and final_area_resp != current.get('area_responsavel'):
+            try:
+                new_assigned_group_id = None
+                
+                # Tentar converter area_responsavel para ID numerico
+                try:
+                    new_assigned_group_id = int(final_area_resp)
+                except (ValueError, TypeError):
+                    # Se nao for numerico, buscar pelo nome
+                    cursor.execute('SELECT id FROM groups WHERE lower(name) = lower(?) LIMIT 1', (str(final_area_resp),))
+                    row = cursor.fetchone()
+                    if row:
+                        new_assigned_group_id = int(row[0])
+                
+                if new_assigned_group_id:
+                    old_assigned_group_id = current.get('assigned_group_id')
+                    
+                    logger.info(f"🔄 ATUALIZANDO DISTRIBUIÇÃO DA RNC {rnc_id}:")
+                    logger.info(f"   Grupo antigo: {old_assigned_group_id}")
+                    logger.info(f"   Grupo novo: {new_assigned_group_id}")
+                    
+                    # Atualizar assigned_group_id
+                    cursor.execute('UPDATE rncs SET assigned_group_id = ? WHERE id = ?', 
+                                 (new_assigned_group_id, rnc_id))
+                    
+                    # Remover compartilhamentos antigos do grupo
+                    if old_assigned_group_id:
+                        cursor.execute('''
+                            DELETE FROM rnc_shares 
+                            WHERE rnc_id = ? 
+                            AND permission_level = 'assigned'
+                        ''', (rnc_id,))
+                        logger.info(f"   Removidos compartilhamentos do grupo antigo")
+                    
+                    # Adicionar compartilhamentos para o novo grupo
+                    users_in_new_group = get_users_by_group(new_assigned_group_id)
+                    for user in users_in_new_group:
+                        user_id = user[0]
+                        if user_id != session['user_id']:
+                            cursor.execute('''
+                                INSERT OR IGNORE INTO rnc_shares 
+                                (rnc_id, shared_by_user_id, shared_with_user_id, permission_level)
+                                VALUES (?, ?, ?, 'assigned')
+                            ''', (rnc_id, session['user_id'], user_id))
+                    
+                    logger.info(f"   ✓ RNC redistribuída para {len(users_in_new_group)} usuários do novo grupo")
+                    
+            except Exception as e:
+                logger.error(f"❌ Erro ao atualizar distribuição da RNC: {e}")
+        
+        # LOG DEBUG: Verificar valores salvos no banco
+        cursor.execute('''
+            SELECT area_responsavel, ass_responsavel, inspetor, responsavel, causador_user_id, assigned_group_id 
+            FROM rncs WHERE id = ?
+        ''', (rnc_id,))
+        saved_values = cursor.fetchone()
+        logger.info(f"✅ VALORES SALVOS NO BANCO (RNC {rnc_id}):")
+        if saved_values:
+            logger.info(f"   area_responsavel: {saved_values[0]}")
+            logger.info(f"   ass_responsavel: {saved_values[1]}")
+            logger.info(f"   inspetor: {saved_values[2]}")
+            logger.info(f"   responsavel: {saved_values[3]}")
+            logger.info(f"   causador_user_id: {saved_values[4]}")
+            logger.info(f"   assigned_group_id: {saved_values[5]}")
+        
         conn.commit()
         conn.close()
 
@@ -2391,35 +2754,134 @@ def renumber_rnc_v2(rnc_id):
                 'message': 'Sem permissão. Apenas administradores podem renumerar RNCs.'
             }), 403
         
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        # Retry logic para evitar "database is locked" - V2
+        max_attempts = 5
+        attempt = 0
+        success = False
+        old_number = None
+        rnc_status = None
+        existing_count = 0
         
-        # Verificar se RNC existe
-        cursor.execute('SELECT id, rnc_number, status FROM rncs WHERE id = ?', (rnc_id,))
-        rnc = cursor.fetchone()
+        while attempt < max_attempts and not success:
+            attempt += 1
+            conn = None
+            try:
+                # Conectar com timeout maior e WAL mode
+                conn = sqlite3.connect(DB_PATH, timeout=30.0, isolation_level=None)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=10000")
+                cursor = conn.cursor()
+                
+                # Usar BEGIN IMMEDIATE para lock exclusivo
+                cursor.execute("BEGIN IMMEDIATE")
+                
+                # Verificar se RNC existe
+                cursor.execute('SELECT id, rnc_number, status FROM rncs WHERE id = ?', (rnc_id,))
+                rnc = cursor.fetchone()
+                
+                if not rnc:
+                    conn.rollback()
+                    conn.close()
+                    return jsonify({'success': False, 'message': 'RNC não encontrado'}), 404
+                
+                old_number = rnc[1]
+                rnc_status = rnc[2]
+                
+                # STANDBY MODE V2: UNIQUE constraint removida - atualização direta
+                cursor.execute('SELECT COUNT(*) FROM rncs WHERE rnc_number = ?', (new_number,))
+                existing_count = cursor.fetchone()[0]
+                
+                if existing_count > 0:
+                    logger.warning(f"⚠️ V2: Criando duplicata - já existe {existing_count} RNC(s) com número {new_number}")
+                
+                cursor.execute('UPDATE rncs SET rnc_number = ? WHERE id = ?', (new_number, rnc_id))
+                conn.commit()
+                conn.close()
+                success = True
+                
+            except sqlite3.IntegrityError as e:
+                # Caso UNIQUE(rnc_number), aplicar migração inline para permitir duplicatas e tentar novamente
+                error_msg = str(e).lower()
+                if conn:
+                    try:
+                        conn.rollback(); conn.close()
+                    except Exception:
+                        pass
+
+                if 'unique' in error_msg and 'rnc_number' in error_msg:
+                    logger.warning("⚠️ V2: UNIQUE(rnc_number) detectada — migrando schema para permitir duplicatas…")
+                    if not _ensure_rncs_allows_duplicates():
+                        if attempt < max_attempts:
+                            time.sleep(0.4 * attempt)
+                            continue
+                        return jsonify({'success': False, 'message': 'Falha ao ajustar schema para duplicatas'}), 500
+                    try:
+                        conn = sqlite3.connect(DB_PATH, timeout=30.0, isolation_level=None)
+                        conn.execute("PRAGMA journal_mode=WAL")
+                        conn.execute("PRAGMA busy_timeout=10000")
+                        cur2 = conn.cursor()
+                        cur2.execute('BEGIN IMMEDIATE')
+                        cur2.execute('UPDATE rncs SET rnc_number = ? WHERE id = ?', (new_number, rnc_id))
+                        conn.commit(); conn.close()
+                        success = True
+                        existing_count += 1
+                        logger.info(f"✅ V2: Renumeração concluída após migração: {old_number} → {new_number}")
+                        break
+                    except Exception as inner2:
+                        try:
+                            conn.rollback(); conn.close()
+                        except Exception:
+                            pass
+                        if attempt < max_attempts:
+                            time.sleep(0.4 * attempt)
+                            continue
+                        return jsonify({'success': False, 'message': f'Erro após migração: {str(inner2)}'}), 500
+                else:
+                    raise
+                    
+            except sqlite3.OperationalError as e:
+                error_msg = str(e).lower()
+                if conn:
+                    try:
+                        conn.rollback()
+                        conn.close()
+                    except:
+                        pass
+                
+                if 'locked' in error_msg or 'busy' in error_msg:
+                    if attempt < max_attempts:
+                        import time
+                        wait_time = 0.5 * attempt
+                        logger.warning(f"⚠️ V2: Database locked na tentativa {attempt}/{max_attempts}, aguardando {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"❌ V2: Database permanece locked após {max_attempts} tentativas")
+                        return jsonify({
+                            'success': False,
+                            'message': 'Banco de dados ocupado. Tente novamente em alguns segundos.'
+                        }), 503
+                else:
+                    raise
+            except Exception as e:
+                if conn:
+                    try:
+                        conn.rollback()
+                        conn.close()
+                    except:
+                        pass
+                raise
         
-        if not rnc:
-            conn.close()
-            return jsonify({'success': False, 'message': 'RNC não encontrado'}), 404
-        
-        old_number = rnc[1]
-        rnc_status = rnc[2]
-        
-        # Verificar se o novo número já existe
-        cursor.execute('SELECT id FROM rncs WHERE rnc_number = ? AND id != ?', (new_number, rnc_id))
-        existing = cursor.fetchone()
-        
-        if existing:
-            conn.close()
+        if not success:
             return jsonify({
-                'success': False, 
-                'message': f'O número {new_number} já está em uso por outra RNC'
-            }), 400
+                'success': False,
+                'message': 'Não foi possível renumerar a RNC após múltiplas tentativas'
+            }), 503
         
-        # Atualizar número
-        cursor.execute('UPDATE rncs SET rnc_number = ? WHERE id = ?', (new_number, rnc_id))
-        conn.commit()
-        conn.close()
+        if existing_count > 0:
+            logger.warning(f"✅ V2: DUPLICATA CRIADA: {existing_count + 1} RNCs com número {new_number}")
+        else:
+            logger.info(f"✅ V2: Renumerada: {old_number} → {new_number}")
         
         # Limpar cache
         with cache_lock:

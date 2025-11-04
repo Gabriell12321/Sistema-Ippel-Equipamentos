@@ -2208,6 +2208,9 @@
                                     style="width: 100%; padding: 12px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 15px; transition: border-color 0.2s;"
                                     onfocus="this.style.borderColor='#ff9800'"
                                     onblur="this.style.borderColor='#d1d5db'"
+                                    onkeydown="event.stopPropagation()"
+                                    onkeyup="event.stopPropagation()"
+                                    onclick="event.stopPropagation()"
                                 >
                                 <p style="margin: 8px 0 0 0; font-size: 12px; color: #6b7280;">
                                     ⚠️ Esta ação irá alterar permanentemente o número da RNC

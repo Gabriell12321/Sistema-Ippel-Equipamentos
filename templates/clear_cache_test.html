@@ -1,0 +1,153 @@
+<!-- Página de teste para forçar hard refresh -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Limpar Cache - RNC System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .card {
+            background: white;
+            color: #333;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #667eea;
+            margin-top: 0;
+        }
+        .step {
+            background: #f5f5f5;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid #667eea;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 5px;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .success {
+            background: #48bb78;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            display: none;
+        }
+        .test-result {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🔧 Diagnóstico e Limpeza de Cache</h1>
+        
+        <div class="step">
+            <strong>1️⃣ Limpar Cache do Browser</strong>
+            <p>Pressione <code>Ctrl + Shift + Delete</code> e limpe "Imagens e arquivos em cache"</p>
+        </div>
+
+        <div class="step">
+            <strong>2️⃣ Hard Refresh</strong>
+            <p>Pressione <code>Ctrl + Shift + R</code> ou <code>Ctrl + F5</code></p>
+        </div>
+
+        <div class="step">
+            <strong>3️⃣ Testar Endpoint</strong>
+            <button onclick="testEndpoint()">🧪 Testar Agora</button>
+        </div>
+
+        <div class="test-result" id="result"></div>
+
+        <div class="success" id="success">
+            ✅ Endpoint funcionando! Agora pode voltar ao dashboard.
+        </div>
+
+        <button onclick="location.href='/dashboard'">📊 Voltar ao Dashboard</button>
+        <button onclick="location.reload(true)">🔄 Recarregar Página</button>
+    </div>
+
+    <script>
+        async function testEndpoint() {
+            const resultDiv = document.getElementById('result');
+            const successDiv = document.getElementById('success');
+            resultDiv.textContent = '🔍 Testando endpoint...\n';
+            
+            try {
+                const url = '/api/rnc/34730/renumber';
+                resultDiv.textContent += `📍 URL: ${window.location.origin + url}\n`;
+                resultDiv.textContent += `📍 Origin: ${window.location.origin}\n\n`;
+                
+                const response = await fetch(url, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: JSON.stringify({ new_number: '34731' })
+                });
+                
+                resultDiv.textContent += `📥 Status: ${response.status} ${response.statusText}\n`;
+                resultDiv.textContent += `📥 URL final: ${response.url}\n`;
+                resultDiv.textContent += `📥 Server: ${response.headers.get('server') || 'N/A'}\n\n`;
+                
+                if (response.status === 401) {
+                    resultDiv.textContent += '✅ SUCESSO! Endpoint funcionando!\n';
+                    resultDiv.textContent += '   Status 401 = Endpoint aceita POST, só precisa login\n';
+                    successDiv.style.display = 'block';
+                } else if (response.status === 405) {
+                    const text = await response.text();
+                    resultDiv.textContent += '❌ ERRO 405! Cache ainda ativo ou proxy bloqueando\n';
+                    resultDiv.textContent += `   Resposta: ${text.substring(0, 200)}\n`;
+                } else {
+                    const text = await response.text();
+                    resultDiv.textContent += `⚠️ Status inesperado: ${response.status}\n`;
+                    resultDiv.textContent += `   Resposta: ${text.substring(0, 200)}\n`;
+                }
+            } catch (error) {
+                resultDiv.textContent += `❌ Erro: ${error.message}\n`;
+            }
+        }
+        
+        // Teste automático ao carregar
+        window.addEventListener('load', () => {
+            console.log('🧪 Página de teste carregada');
+            console.log('📍 Origin:', window.location.origin);
+            console.log('📍 Href:', window.location.href);
+        });
+    </script>
+</body>
+</html>

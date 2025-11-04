@@ -361,6 +361,14 @@ if not HAS_TALISMAN:
     @app.after_request
     def add_basic_csp(resp):
         try:
+            # Permitir cookies em requisições AJAX mesmo com porta customizada
+            origin = request.headers.get('Origin')
+            if origin:
+                resp.headers['Access-Control-Allow-Origin'] = origin
+                resp.headers['Access-Control-Allow-Credentials'] = 'true'
+                resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+                resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept, X-Requested-With, Authorization'
+            
             policy = " ".join([
                 "default-src 'self';",
                 "base-uri 'self';",
@@ -528,6 +536,22 @@ try:
     logger.info(" Blueprint de notificações registrado")
 except Exception as e:
     logger.error(f" Erro ao registrar blueprint de notificações: {e}")
+
+
+# Temporary debug endpoint: list registered routes (safe for local debugging)
+@app.route('/__debug/routes', methods=['GET'])
+def __debug_routes():
+    try:
+        rules = []
+        for rule in app.url_map.iter_rules():
+            rules.append({
+                'rule': str(rule),
+                'endpoint': rule.endpoint,
+                'methods': sorted(list(rule.methods))
+            })
+        return jsonify({'success': True, 'routes': rules})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # Inicializar Socket.IO para notificações
 if socketio is not None:
@@ -2064,6 +2088,16 @@ def get_all_permissions():
             'name': 'reply_rncs',
             'display_name': 'Responder RNC',
             'description': 'Permite responder e reabrir qualquer RNC do sistema'
+        },
+        {
+            'name': 'permanent_delete_rnc',
+            'display_name': 'Apagar RNC Permanentemente',
+            'description': 'Permite apagar RNCs finalizadas permanentemente do banco de dados (Admin)'
+        },
+        {
+            'name': 'renumber_rnc',
+            'display_name': 'Renumerar RNC',
+            'description': 'Permite alterar o número de uma RNC finalizada (Admin)'
         }
     ]
     
@@ -2092,6 +2126,11 @@ def teste_som_notificacoes():
 def diagnostico_notificacoes():
     """Página de diagnóstico completo de notificações do Windows"""
     return render_template('diagnostico_notificacoes.html')
+
+@app.route('/clear-cache-test')
+def clear_cache_test():
+    """Página de teste para limpar cache do browser"""
+    return render_template('clear_cache_test.html')
 
 @app.route('/dashboard')
 def dashboard():
@@ -3496,9 +3535,18 @@ def get_user_info():
                     LEFT JOIN rnc_shares rs ON rs.rnc_id = r.id
                     WHERE (r.is_deleted = 0 OR r.is_deleted IS NULL) 
                     AND r.status NOT IN ('Finalizado') 
-                    AND (r.user_id = ? OR r.assigned_user_id = ? OR rs.shared_with_user_id = ?)
+                    AND (
+                        r.user_id = ? 
+                        OR r.assigned_user_id = ? 
+                        OR rs.shared_with_user_id = ?
+                        OR (r.assigned_group_id IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM groups g 
+                            WHERE g.id = r.assigned_group_id 
+                            AND (g.manager_user_id = ? OR g.sub_manager_user_id = ?)
+                        ))
+                    )
                     ORDER BY r.id DESC
-                ''', (session['user_id'], session['user_id'], session['user_id']))
+                ''', (session['user_id'], session['user_id'], session['user_id'], session['user_id'], session['user_id']))
 
         elif tab == 'finalized':
             # RNCs finalizados - mostrar todos
@@ -3639,11 +3687,20 @@ def get_user_info():
         cursor = conn.cursor()
         
         # Buscar RNC com informações do usuário, dados de disposição/inspeção e assinaturas
+        # Incluir JOINs para resolver nomes de: grupo responsável, inspetor, causador
         cursor.execute('''
-            SELECT r.*, u.name as user_name, au.name as assigned_user_name
+            SELECT r.*, 
+                   u.name as user_name, 
+                   au.name as assigned_user_name,
+                   g.name as area_responsavel_name,
+                   ui.name as inspetor_name,
+                   ur.name as causador_name
             FROM rncs r 
             LEFT JOIN users u ON r.user_id = u.id 
             LEFT JOIN users au ON r.assigned_user_id = au.id
+            LEFT JOIN groups g ON CAST(r.area_responsavel AS INTEGER) = g.id
+            LEFT JOIN users ui ON r.inspetor = ui.name COLLATE NOCASE
+            LEFT JOIN users ur ON CAST(r.responsavel AS INTEGER) = ur.id
             WHERE r.id = ?
         ''', (rnc_id,))
         
@@ -3686,7 +3743,7 @@ def get_user_info():
                 'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name','price',
                 'department','instruction_retrabalho','cause_rnc','action_rnc'
             ]
-        columns = base_columns + ['user_name', 'assigned_user_name']
+        columns = base_columns + ['user_name', 'assigned_user_name', 'area_responsavel_name', 'inspetor_name', 'causador_name']
         
         # Ajustar o número de colunas baseado na estrutura atual
         if len(rnc_data) < len(columns):
@@ -3761,10 +3818,18 @@ def get_user_info():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT r.*, u.name as user_name, au.name as assigned_user_name
+            SELECT r.*, 
+                   u.name as user_name, 
+                   au.name as assigned_user_name,
+                   g.name as area_responsavel_name,
+                   ui.name as inspetor_name,
+                   ur.name as causador_name
               FROM rncs r
               LEFT JOIN users u ON r.user_id = u.id
               LEFT JOIN users au ON r.assigned_user_id = au.id
+              LEFT JOIN groups g ON CAST(r.area_responsavel AS INTEGER) = g.id
+              LEFT JOIN users ui ON r.inspetor = ui.name COLLATE NOCASE
+              LEFT JOIN users ur ON CAST(r.responsavel AS INTEGER) = ur.id
              WHERE r.id = ?
         ''', (rnc_id,))
         rnc_data = cursor.fetchone()
@@ -3797,12 +3862,19 @@ def get_user_info():
                 'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name','price',
                 'department','instruction_retrabalho','cause_rnc','action_rnc'
             ]
-        columns = base_columns + ['user_name', 'assigned_user_name']
+        columns = base_columns + ['user_name', 'assigned_user_name', 'area_responsavel_name', 'inspetor_name', 'causador_name']
 
         if len(rnc_data) < len(columns):
             rnc_data = list(rnc_data) + [None] * (len(columns) - len(rnc_data))
 
         rnc_dict = dict(zip(columns, rnc_data))
+        
+        # Log para debug dos campos de assinatura do cabeçalho
+        logger.info(f"[RESPOSTA RNC {rnc_id}] Campos carregados:")
+        logger.info(f"  - area_responsavel: {rnc_dict.get('area_responsavel')} -> {rnc_dict.get('area_responsavel_name')}")
+        logger.info(f"  - ass_responsavel: {rnc_dict.get('ass_responsavel')}")
+        logger.info(f"  - inspetor: {rnc_dict.get('inspetor')} -> {rnc_dict.get('inspetor_name')}")
+        logger.info(f"  - responsavel: {rnc_dict.get('responsavel')} -> {rnc_dict.get('causador_name')}")
 
         # Sinalizar modo de resposta para o template (pode ajustar labels e lógica)
         return render_template('edit_rnc_form.html', rnc=rnc_dict, is_editing=True, is_reply=True)
@@ -3991,12 +4063,20 @@ def get_user_info():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Buscar RNC com assinaturas
+        # Buscar RNC com assinaturas e nomes resolvidos
         cursor.execute('''
-            SELECT r.*, u.name as user_name, au.name as assigned_user_name
+            SELECT r.*, 
+                   u.name as user_name, 
+                   au.name as assigned_user_name,
+                   g.name as area_responsavel_name,
+                   ui.name as inspetor_name,
+                   ur.name as causador_name
             FROM rncs r 
             LEFT JOIN users u ON r.user_id = u.id 
             LEFT JOIN users au ON r.assigned_user_id = au.id
+            LEFT JOIN groups g ON CAST(r.area_responsavel AS INTEGER) = g.id
+            LEFT JOIN users ui ON r.inspetor = ui.name COLLATE NOCASE
+            LEFT JOIN users ur ON CAST(r.responsavel AS INTEGER) = ur.id
             WHERE r.id = ?
         ''', (rnc_id,))
         
@@ -4036,13 +4116,20 @@ def get_user_info():
                 'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name','price',
                 'department','instruction_retrabalho','cause_rnc','action_rnc'
             ]
-        columns = base_columns + ['user_name', 'assigned_user_name']
+        columns = base_columns + ['user_name', 'assigned_user_name', 'area_responsavel_name', 'inspetor_name', 'causador_name']
 
         # Ajustar o tamanho para evitar perdas quando a estrutura tiver mais/menos colunas
         if len(rnc_data) < len(columns):
             rnc_data = list(rnc_data) + [None] * (len(columns) - len(rnc_data))
         
         rnc_dict = dict(zip(columns, rnc_data))
+        
+        # Log para debug dos campos de assinatura do cabeçalho
+        logger.info(f"[EDIÇÃO RNC {rnc_id}] Campos carregados:")
+        logger.info(f"  - area_responsavel: {rnc_dict.get('area_responsavel')} -> {rnc_dict.get('area_responsavel_name')}")
+        logger.info(f"  - ass_responsavel: {rnc_dict.get('ass_responsavel')}")
+        logger.info(f"  - inspetor: {rnc_dict.get('inspetor')} -> {rnc_dict.get('inspetor_name')}")
+        logger.info(f"  - responsavel: {rnc_dict.get('responsavel')} -> {rnc_dict.get('causador_name')}")
         
         # Retornar o mesmo template de criação, mas com dados preenchidos
         return render_template('edit_rnc_form.html', rnc=rnc_dict, is_editing=True)
@@ -4187,7 +4274,8 @@ def get_user_info():
                 disposition_usar = ?, disposition_retrabalhar = ?, disposition_rejeitar = ?, disposition_sucata = ?,
                 disposition_devolver_estoque = ?, disposition_devolver_fornecedor = ?,
                 inspection_aprovado = ?, inspection_reprovado = ?, inspection_ver_rnc = ?,
-                instruction_retrabalho = ?, cause_rnc = ?, action_rnc = ?
+                instruction_retrabalho = ?, cause_rnc = ?, action_rnc = ?,
+                area_responsavel = ?, ass_responsavel = ?, inspetor = ?, responsavel = ?
             WHERE id = ?
         ''', (
             data.get('title', current.get('title','')),
@@ -4214,6 +4302,10 @@ def get_user_info():
             instruction_retrabalho,
             cause_rnc,
             action_rnc,
+            data.get('area_responsavel', current.get('area_responsavel', '')),
+            data.get('ass_responsavel', current.get('ass_responsavel', '')),
+            data.get('inspetor', current.get('inspetor', '')),
+            data.get('responsavel', current.get('responsavel', '')) or data.get('nome_responsavel', current.get('responsavel', '')),
             rnc_id
         ))
         
@@ -5247,6 +5339,98 @@ def api_get_group_manager(group_id):
             'success': False,
             'message': 'Erro interno do sistema'
         }), 500
+
+# Alias de compatibilidade para páginas que consomem endpoints antigos de managers
+@app.route('/admin/managers/api/groups', methods=['GET'])
+def admin_managers_api_groups_alias():
+    """Alias para compatibilidade: retorna a lista de grupos no formato existente.
+    Algumas páginas (ex.: edit_rnc_form) chamam /admin/managers/api/groups.
+    Reutilizamos a mesma implementação de /api/groups.
+    """
+    return api_get_groups()
+
+@app.route('/admin/managers/api/group/<path:group_name>/manager', methods=['GET'])
+def admin_managers_api_group_manager_alias(group_name):
+    """Alias para compatibilidade: obtém gerente pelo NOME do grupo.
+    Tenta usar manager_user_id definido na tabela groups; caso ausente,
+    aplica mapeamento padrão por nome do grupo (fallback), semelhante ao endpoint por ID.
+    Retorna: { success, manager: { id, name, email, department } }
+    """
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, manager_user_id, name FROM groups WHERE name = ?", (group_name,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return jsonify({'success': False, 'message': 'Grupo não encontrado'}), 404
+
+        group_id, manager_user_id, resolved_name = row[0], row[1], row[2]
+
+        # Se houver manager_user_id configurado na tabela, usar esse usuário
+        if manager_user_id:
+            cursor.execute(
+                "SELECT id, name, email, department FROM users WHERE id = ?",
+                (manager_user_id,)
+            )
+            mgr = cursor.fetchone()
+            conn.close()
+            if not mgr:
+                return jsonify({'success': False, 'message': 'Gerente configurado não encontrado'}), 404
+            return jsonify({
+                'success': True,
+                'manager': {
+                    'id': mgr[0],
+                    'name': mgr[1],
+                    'email': mgr[2],
+                    'department': mgr[3]
+                }
+            })
+
+        # Fallback: mapeamento estático por nome (compatível com api_get_group_manager)
+        GROUP_MANAGERS = {
+            'Comercial': 'Sandro',
+            'Compras': 'Marcelo',
+            'Engenharia': 'Guilherme',
+            'PCP': 'Fernando',
+            'Qualidade': 'Alan',
+            'Usinagem Plana': 'Ronaldo'
+        }
+
+        manager_name = GROUP_MANAGERS.get(resolved_name)
+        if not manager_name:
+            conn.close()
+            return jsonify({'success': False, 'message': f'Nenhum gerente definido para o grupo {resolved_name}'}), 404
+
+        cursor.execute(
+            """
+            SELECT id, name, email, department
+            FROM users
+            WHERE name = ? AND group_id = ? AND is_active = 1
+            """,
+            (manager_name, group_id)
+        )
+        manager_row = cursor.fetchone()
+        conn.close()
+
+        if not manager_row:
+            return jsonify({'success': False, 'message': f'Gerente {manager_name} não encontrado no grupo {resolved_name}'}), 404
+
+        return jsonify({
+            'success': True,
+            'manager': {
+                'id': manager_row[0],
+                'name': manager_row[1],
+                'email': manager_row[2],
+                'department': manager_row[3]
+            }
+        })
+    except Exception as e:
+        logger.error(f"Erro no alias de gerente por nome de grupo: {e}")
+        return jsonify({'success': False, 'message': 'Erro interno do sistema'}), 500
 
 @app.route('/api/admin/groups/suggestions', methods=['GET'])
 def api_get_group_suggestions():
@@ -8384,10 +8568,12 @@ if __name__ == '__main__':
         app.config['SESSION_COOKIE_PATH'] = '/'
         
         # Configurar cookies seguros se HTTPS estiver ativo
+        # IMPORTANTE: Mesmo em HTTPS, cookies precisam funcionar em porta customizada (5001)
         if use_https:
             app.config['SESSION_COOKIE_SECURE'] = True  # Apenas HTTPS
             app.config['SESSION_COOKIE_HTTPONLY'] = True
-            app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+            # None = permite cross-site em mesma origem com porta diferente
+            app.config['SESSION_COOKIE_SAMESITE'] = None
         
         # Executar servidor com SocketIO habilitado
         print(" Executando com SocketIO - funcionalidades de chat completas")

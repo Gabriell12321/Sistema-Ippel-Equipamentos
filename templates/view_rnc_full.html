@@ -1251,8 +1251,8 @@
                         <td class="field-label" style="width: 33.33%;">DATA</td>
                     </tr>
                     <tr>
-                        <td class="field-value">{{ rnc.area_responsavel_name or rnc.area_responsavel or '-' }}</td>
-                        <td class="field-value">{{ rnc.ass_responsavel or '-' }}</td>
+                        <td class="field-value">{{ rnc.area_responsavel_name or rnc.area_responsavel or rnc.setor_responsavel or '-' }}</td>
+                        <td class="field-value">{{ rnc.ass_responsavel or rnc.gerente_grupo_name or '-' }}</td>
                         <td class="field-value">{{ rnc.created_at[:10] if rnc.created_at else '-' }}</td>
                     </tr>
                 </table>

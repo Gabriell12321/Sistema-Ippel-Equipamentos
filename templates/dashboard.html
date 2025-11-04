@@ -1190,6 +1190,14 @@ document.addEventListener('DOMContentLoaded', () => {
                                 🗑️ Excluir
                             </button>
                         ` : ''}
+                        ${isAdmin && rnc.status === 'Finalizado' ? `
+                            <button onclick="event.stopPropagation(); renumberRNC(${rnc.id}, '${rnc.rnc_number}')" class="action-btn btn-warning" title="Renumerar RNC" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white;">
+                                🔢 Renumerar
+                            </button>
+                            <button onclick="event.stopPropagation(); permanentDeleteRNC(${rnc.id}, '${rnc.rnc_number}', '${rnc.title}')" class="action-btn btn-danger" title="Apagar Permanentemente" style="background: linear-gradient(135deg, #dc2626, #991b1b); color: white;">
+                                ⚠️ Apagar
+                            </button>
+                        ` : ''}
                     </div>
                 </div>`;
             }).join('');
@@ -1604,6 +1612,79 @@ document.addEventListener('DOMContentLoaded', () => {
             const modal = document.getElementById('deleteModal');
             if (event.target === modal) {
                 closeDeleteModal();
+            }
+        }
+
+        // Função para renumerar RNC (ADMIN)
+        async function renumberRNC(rncId, currentNumber) {
+            const newNumber = prompt(`Renumerar RNC ${currentNumber}\n\nDigite o novo número:`, currentNumber);
+            
+            if (!newNumber || newNumber.trim() === '' || newNumber === currentNumber) {
+                return; // Cancelado ou sem mudança
+            }
+            
+            if (!confirm(`Confirma renumerar de "${currentNumber}" para "${newNumber}"?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/rnc/${rncId}/renumber-v2`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        new_number: newNumber.trim()
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(`✅ ${data.message}`);
+                    loadRNCs(); // Recarregar a lista
+                } else {
+                    alert(`❌ Erro: ${data.message}`);
+                }
+            } catch (error) {
+                console.error('Erro ao renumerar RNC:', error);
+                alert('❌ Erro ao renumerar RNC');
+            }
+        }
+
+        // Função para apagar RNC permanentemente (ADMIN)
+        async function permanentDeleteRNC(rncId, rncNumber, rncTitle) {
+            if (!confirm(`⚠️ ATENÇÃO: APAGAR PERMANENTEMENTE?\n\nRNC: ${rncNumber}\nTítulo: ${rncTitle}\n\nEsta ação é IRREVERSÍVEL e apagará a RNC do banco de dados!\n\nTem certeza?`)) {
+                return;
+            }
+            
+            // Confirmação dupla para segurança
+            const confirmation = prompt(`Para confirmar, digite o número da RNC: ${rncNumber}`);
+            
+            if (confirmation !== rncNumber) {
+                alert('❌ Confirmação incorreta. Operação cancelada.');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/rnc/${rncId}/permanent-delete`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(`✅ ${data.message}`);
+                    loadRNCs(); // Recarregar a lista
+                } else {
+                    alert(`❌ Erro: ${data.message}`);
+                }
+            } catch (error) {
+                console.error('Erro ao apagar RNC permanentemente:', error);
+                alert('❌ Erro ao apagar RNC');
             }
         }
 

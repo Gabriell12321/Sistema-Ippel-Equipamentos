@@ -307,13 +307,44 @@
 
                         var formData = {};
                         // Campos principais simples (se existirem)
-                        ['title','description','equipment','client','rnc_number','mp','revision','position','cv','conjunto','modelo','description_drawing','quantity','material','purchase_order','responsavel','inspetor','area_responsavel','created_at','instruction_retrabalho','cause_rnc','action_rnc'].forEach(function(k){
+                        ['title','description','equipment','client','rnc_number','mp','revision','position','cv','conjunto','modelo','description_drawing','quantity','material','purchase_order','created_at','instruction_retrabalho','cause_rnc','action_rnc'].forEach(function(k){
                             var v = valById(k);
                             if (v !== '') formData[k] = v;
                         });
-                        // Select específico usado na página
+                        
+                        // ASSINATURAS CABEÇALHO - Coletar campos corretamente
+                        // 1. Setor Responsável (converter nome para ID)
                         var areaSel = document.getElementById('area_responsavel_select');
-                        if (areaSel && areaSel.value && !formData.area_responsavel) formData.area_responsavel = areaSel.value;
+                        if (areaSel && areaSel.value) {
+                            // Buscar o ID do grupo pelo nome
+                            const selectedGroupName = areaSel.value;
+                            const selectedGroup = window.allGroups ? window.allGroups.find(g => g.name === selectedGroupName) : null;
+                            formData.area_responsavel = selectedGroup ? selectedGroup.id : selectedGroupName;
+                        }
+                        
+                        // 2. Assinatura Responsável
+                        var assResponsavel = valById('ass_responsavel');
+                        if (assResponsavel) formData.ass_responsavel = assResponsavel;
+                        
+                        // 3. Inspetor
+                        var inspetor = document.querySelector('input[name="inspetor"]')?.value;
+                        if (inspetor) formData.inspetor = inspetor;
+                        
+                        // 4. Nome Causador (converter nome para ID)
+                        var nomeRespSel = document.getElementById('nome_responsavel');
+                        if (nomeRespSel && nomeRespSel.value) {
+                            // Buscar o ID do usuário pelo nome
+                            const selectedUserName = nomeRespSel.value;
+                            const selectedUser = window.allUsers ? window.allUsers.find(u => u.name === selectedUserName) : null;
+                            formData.responsavel = selectedUser ? selectedUser.id : selectedUserName;
+                            formData.nome_responsavel = selectedUserName; // Manter o nome também
+                            // NOVO: Adicionar causador_user_id para sincronizar com visualização
+                            formData.causador_user_id = selectedUser ? selectedUser.id : null;
+                        }
+                        
+                        // 5. Assinatura Causador
+                        var assinaturaLider = valById('assinatura_lider');
+                        if (assinaturaLider) formData.signature_inspection2_name = assinaturaLider;
 
                         // Preço e observação
                         var priceRaw = valById('price');
@@ -340,6 +371,16 @@
                         formData.inspection_aprovado = checked('aprovado');
                         formData.inspection_reprovado = checked('reprovado');
                         formData.inspection_ver_rnc = valById('ver_rnc_input');
+
+                        // DEBUG: Mostrar valores de ASSINATURAS CABEÇALHO que serão enviados
+                        console.log('🔍 VALORES ASSINATURAS CABEÇALHO A ENVIAR:');
+                        console.log('   area_responsavel:', formData.area_responsavel);
+                        console.log('   ass_responsavel:', formData.ass_responsavel);
+                        console.log('   inspetor:', formData.inspetor);
+                        console.log('   responsavel:', formData.responsavel);
+                        console.log('   nome_responsavel:', formData.nome_responsavel);
+                        console.log('   causador_user_id:', formData.causador_user_id);
+                        console.log('   signature_inspection2_name:', formData.signature_inspection2_name);
 
                         fetch('/api/rnc/{{ rnc.id }}/update', {
                             method: 'PUT',
@@ -576,10 +617,15 @@
                     <tr>
                         <td>
                             <select id="area_responsavel_select" name="area_responsavel" class="input-field" data-field="area_responsavel" onchange="onAreaResponsavelChange()" style="padding: 10px; border: 1px solid #e0e0e0; border-radius: 8px; font-size: 14px; width: 100%; background: white; cursor: pointer; transition: all 0.2s;">
+                                {% set current_group_label = (rnc.area_responsavel_name or rnc.area_responsavel) %}
                                 <option value="">Selecione a Área Responsável</option>
+                                {% if current_group_label %}
+                                <!-- Exibe imediatamente o valor atual enquanto o JS carrega as opções -->
+                                <option value="{{ current_group_label }}" selected>{{ current_group_label }}</option>
+                                {% endif %}
                             </select>
                         </td>
-                        <td><input type="text" id="ass_responsavel" name="ass_responsavel" class="input-field" placeholder="Assinatura Responsável" data-field="signature_inspection_name" value="{{ rnc.signature_inspection_name or '' }}"></td>
+                        <td><input type="text" id="ass_responsavel" name="ass_responsavel" class="input-field" placeholder="Assinatura Responsável" data-field="signature_inspection_name" value="{{ rnc.ass_responsavel or rnc.gerente_grupo_name or rnc.signature_engineering_name or rnc.signature_inspection_name or '' }}"></td>
                         <td><input type="text" id="data_emissao" name="data_emissao" class="input-field" data-field="created_at" value="{{ (rnc.created_at or '')[:10] if rnc.created_at else '' }}"></td>
                     </tr>
                 </table>
@@ -592,10 +638,15 @@
                         <td class="field-label" style="width: 33.33%;">ASSINATURA CAUSADOR</td>
                     </tr>
                     <tr>
-                        <td><input type="text" name="inspetor" class="input-field" placeholder="Inspetor" data-field="inspetor" value="{{ rnc.inspetor or '' }}"></td>
+                        <td><input type="text" name="inspetor" class="input-field" placeholder="Inspetor" data-field="inspetor" value="{{ rnc.inspetor_name or rnc.inspetor or '' }}"></td>
                         <td>
                             <select id="nome_responsavel" name="nome_responsavel" class="input-field" data-field="responsavel" onchange="onNomeResponsavelChange()" style="padding: 10px; border: 1px solid #e0e0e0; border-radius: 8px; font-size: 14px; width: 100%; background: white; cursor: pointer; transition: all 0.2s;">
                                 <option value="">Selecione o Usuário Causador</option>
+                                {% set current_causador_label = (rnc.causador_name or rnc.responsavel_name or rnc.responsavel) %}
+                                {% if current_causador_label %}
+                                <!-- Exibe imediatamente o causador atual enquanto o JS carrega as opções -->
+                                <option value="{{ current_causador_label }}" selected>{{ current_causador_label }}</option>
+                                {% endif %}
                             </select>
                         </td>
                         <td><input type="text" name="assinatura_lider" id="assinatura_lider" class="input-field" placeholder="Digite a assinatura manualmente" data-field="signature_inspection2_name" value="{{ rnc.signature_inspection2_name or '' }}"></td>
@@ -1668,17 +1719,33 @@
 
         // Carregar grupos (setores) para o select de área responsável
         async function loadGroups() {
+            console.log('loadGroups iniciado');
             try {
+                console.log('Fazendo fetch para /admin/managers/api/groups');
                 const response = await fetch('/admin/managers/api/groups', { credentials: 'include' });
+                console.log('Response status:', response.status);
+                
                 const data = await response.json();
+                console.log('Data recebida:', data);
                 
                 if (data && data.success && data.groups) {
+                    console.log('Grupos encontrados:', data.groups.length);
+                    
+                    // Armazenar globalmente para conversão nome→ID no submit
+                    window.allGroups = data.groups;
+                    
                     const select = document.getElementById('area_responsavel_select');
+                    console.log('Select encontrado:', select);
+                    
                     if (select) {
+                        console.log('Opções antes de limpar:', select.options.length);
+                        
                         // Limpar opções existentes (exceto a primeira)
                         while (select.options.length > 1) {
                             select.remove(1);
                         }
+                        
+                        console.log('Opções após limpar:', select.options.length);
                         
                         // Adicionar grupos
                         data.groups.forEach(group => {
@@ -1686,35 +1753,120 @@
                             option.value = group.name;
                             option.textContent = group.name;
                             select.appendChild(option);
+                            console.log('Adicionado grupo:', group.name);
                         });
                         
-                        // Selecionar o grupo atual se houver
-                        const currentGroup = "{{ rnc.area_responsavel or '' }}";
+                        console.log('Opções após adicionar:', select.options.length);
+                        
+                        // Selecionar o grupo atual se houver (robusto: aceita nome com/sem acento e também ID)
+                        // Prioriza area_responsavel_name (nome resolvido), depois area_responsavel (ID)
+                        const currentGroupName = "{{ rnc.area_responsavel_name or '' }}";
+                        const currentGroupId = "{{ rnc.area_responsavel or '' }}";
+                        const currentGroup = currentGroupName || currentGroupId;
+                        
                         if (currentGroup) {
-                            select.value = currentGroup;
+                            const norm = (s) => (s || '').toString().trim().toLowerCase();
+                            const onlyDigits = /^\d+$/;
+
+                            let applied = false;
+
+                            // 1) Tentar por valor direto (nome igual)
+                            for (const opt of Array.from(select.options)) {
+                                if (norm(opt.value) === norm(currentGroup)) {
+                                    select.value = opt.value;
+                                    applied = true;
+                                    break;
+                                }
+                            }
+
+                            // 2) Tentar por texto visível
+                            if (!applied) {
+                                for (const opt of Array.from(select.options)) {
+                                    if (norm(opt.textContent) === norm(currentGroup)) {
+                                        select.value = opt.value;
+                                        applied = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // 3) Caso seja um ID de grupo salvo em area_responsavel
+                            if (!applied && onlyDigits.test(String(currentGroupId))) {
+                                const match = (data.groups || []).find(g => String(g.id) === String(currentGroupId));
+                                if (match) {
+                                    select.value = match.name;
+                                    applied = true;
+                                }
+                            }
+
+                            // 4) Fallback: contém parcial (ex.: "Engenhar" casa com "Engenharia")
+                            if (!applied) {
+                                for (const opt of Array.from(select.options)) {
+                                    if (norm(opt.textContent).includes(norm(currentGroup))) {
+                                        select.value = opt.value;
+                                        applied = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            console.log('Grupo atual alvo:', currentGroup, 'aplicado:', applied, 'valor final:', select.value);
+
+                            // 5) Se ainda não aplicou, criar uma opção fallback com o valor atual vindo da visualização
+                            if (!applied && currentGroup) {
+                                const opt = document.createElement('option');
+                                opt.value = currentGroup;
+                                opt.textContent = currentGroup;
+                                opt.selected = true;
+                                select.appendChild(opt);
+                                console.log('Adicionada opção fallback para setor responsável:', currentGroup);
+                            }
+
+                            // Preencher assinatura do responsável automaticamente se campo vazio
+                            // Não sobrescrever assinatura já existente; apenas manter seleção do setor
                         }
                         
-                        console.log(' Select de grupos populado com', data.groups.length, 'grupos');
+                        console.log('Select de grupos populado com', data.groups.length, 'grupos');
+                    } else {
+                        console.error('Select area_responsavel_select não encontrado');
                     }
+                } else {
+                    console.error('Dados inválidos:', data);
                 }
             } catch (error) {
-                console.error(' Erro ao carregar grupos:', error);
+                console.error('Erro ao carregar grupos:', error);
             }
         }
 
         // Carregar usuários para o select de nome causador
         async function loadUsers() {
+            console.log('loadUsers iniciado');
             try {
+                console.log('Fazendo fetch para /api/users/list');
                 const response = await fetch('/api/users/list', { credentials: 'include' });
+                console.log('Response status:', response.status);
+                
                 const data = await response.json();
+                console.log('Data recebida:', data);
                 
                 if (data && data.success && data.users) {
+                    console.log('Usuários encontrados:', data.users.length);
+                    
+                    // Armazenar globalmente para conversão nome→ID no submit
+                    window.allUsers = data.users;
+                    
                     const select = document.getElementById('nome_responsavel');
+                    console.log('Select encontrado:', select);
+                    
                     if (select) {
+                        console.log('Opções antes de limpar:', select.options.length);
+                        
                         // Limpar opções existentes (exceto a primeira)
                         while (select.options.length > 1) {
                             select.remove(1);
                         }
+                        
+                        console.log('Opções após limpar:', select.options.length);
                         
                         // Adicionar usuários
                         data.users.forEach(user => {
@@ -1722,24 +1874,90 @@
                             option.value = user.name;
                             option.textContent = `${user.name} (${user.department || 'Sem setor'})`;
                             select.appendChild(option);
+                            console.log('Adicionado usuário:', user.name);
                         });
                         
-                        // Selecionar o usuário atual se houver
-                        const currentResponsavel = "{{ rnc.responsavel or '' }}";
+                        console.log('Opções após adicionar:', select.options.length);
+                        
+                        // Selecionar o usuário atual se houver (robusto)
+                        // Prioriza causador_name (nome resolvido), depois tenta responsavel/nome_responsavel (ID ou nome)
+                        const currentResponsavelName = "{{ rnc.causador_name or '' }}";
+                        const currentResponsavelId = "{{ rnc.responsavel or '' }}";
+                        const currentResponsavelAlt = "{{ rnc.nome_responsavel or rnc.signature_inspection2_name or '' }}";
+                        const currentResponsavel = currentResponsavelName || currentResponsavelAlt || currentResponsavelId;
+                        
                         if (currentResponsavel) {
-                            select.value = currentResponsavel;
+                            const norm = (s) => (s || '').toString().trim().toLowerCase();
+                            const onlyDigits = /^\d+$/;
+                            let applied = false;
+
+                            // 1) Match exato em value
+                            for (const opt of Array.from(select.options)) {
+                                if (norm(opt.value) === norm(currentResponsavel)) {
+                                    select.value = opt.value;
+                                    applied = true;
+                                    break;
+                                }
+                            }
+
+                            // 2) Match exato em texto
+                            if (!applied) {
+                                for (const opt of Array.from(select.options)) {
+                                    if (norm(opt.textContent) === norm(currentResponsavel) || norm(opt.textContent).startsWith(norm(currentResponsavel) + ' (')) {
+                                        select.value = opt.value;
+                                        applied = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // 3) Se for ID numérico, tentar encontrar usuário correspondente
+                            if (!applied && onlyDigits.test(String(currentResponsavelId))) {
+                                const match = (data.users || []).find(u => String(u.id) === String(currentResponsavelId));
+                                if (match) {
+                                    select.value = match.name;
+                                    applied = true;
+                                }
+                            }
+
+                            // 4) Fallback por conteúdo parcial
+                            if (!applied) {
+                                for (const opt of Array.from(select.options)) {
+                                    if (norm(opt.textContent).includes(norm(currentResponsavel))) {
+                                        select.value = opt.value;
+                                        applied = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            console.log('Responsável alvo:', currentResponsavel, 'aplicado:', applied, 'valor final:', select.value);
+
+                            // 5) Se ainda não aplicou, criar uma opção fallback com o valor atual vindo da visualização
+                            if (!applied && currentResponsavel) {
+                                const opt = document.createElement('option');
+                                opt.value = currentResponsavel;
+                                opt.textContent = currentResponsavel;
+                                opt.selected = true;
+                                select.appendChild(opt);
+                                console.log('Adicionada opção fallback para usuário causador:', currentResponsavel);
+                            }
                         }
                         
-                        console.log(' Select de usuários causadores populado com', data.users.length, 'usuários');
+                        console.log('Select de usuários causadores populado com', data.users.length, 'usuários');
+                    } else {
+                        console.error('Select nome_responsavel não encontrado');
                     }
+                } else {
+                    console.error('Dados inválidos:', data);
                 }
             } catch (error) {
-                console.error(' Erro ao carregar usuários causadores:', error);
+                console.error('Erro ao carregar usuários causadores:', error);
             }
         }
 
         document.addEventListener('DOMContentLoaded', function() {
-            console.log(' DOM carregado - inicializando...');
+            console.log('DOM carregado - inicializando...');
             
             try {
                 fetch('/api/user/info', { credentials: 'include' })
@@ -1748,7 +1966,7 @@
                         if (d && d.success && d.user) {
                             __CURRENT_USER_NAME = d.user.name || null;
                             __CURRENT_USER_DEPT = d.user.department || null;
-                            console.log(' Usuário carregado:', __CURRENT_USER_NAME, __CURRENT_USER_DEPT);
+                            console.log('Usuário carregado:', __CURRENT_USER_NAME, __CURRENT_USER_DEPT);
                         }
                     })
                     .catch(() => {});
@@ -1757,20 +1975,32 @@
             // Carregar usuários para o select de atribuição
             loadAssignedUsers();
             
-            // Carregar grupos (setores) para o select de área responsável
-            loadGroups();
+            // Carregar grupos (setores) para o select de área responsável PRIMEIRO
+            console.log('Chamando loadGroups()...');
+            console.log('Valores disponíveis do backend:');
+            console.log('  area_responsavel:', "{{ rnc.area_responsavel or '' }}");
+            console.log('  area_responsavel_name:', "{{ rnc.area_responsavel_name or '' }}");
+            console.log('  ass_responsavel:', "{{ rnc.ass_responsavel or '' }}");
+            console.log('  inspetor:', "{{ rnc.inspetor or '' }}");
+            console.log('  inspetor_name:', "{{ rnc.inspetor_name or '' }}");
+            console.log('  responsavel:', "{{ rnc.responsavel or '' }}");
+            console.log('  causador_name:', "{{ rnc.causador_name or '' }}");
             
-            // Carregar usuários para o select de nome causador
-            loadUsers();
-                        }
-                    })
-                    .catch(() => {});
-            } catch(_) {}
+            loadGroups().then(() => {
+                console.log('loadGroups finalizado');
+            }).catch(err => {
+                console.error('Erro em loadGroups:', err);
+            });
             
-            // Carregar usuários para o select de atribuição
-            loadAssignedUsers();
+            // Carregar usuários para o select de nome causador PRIMEIRO
+            console.log('Chamando loadUsers()...');
+            loadUsers().then(() => {
+                console.log('loadUsers finalizado');
+            }).catch(err => {
+                console.error('Erro em loadUsers:', err);
+            });
 
-            // � PREENCHER DATAS DE ASSINATURA DO BANCO DE DADOS
+            // PREENCHER DATAS DE ASSINATURA DO BANCO DE DADOS
             console.log(' Carregando datas de assinatura...');
             try {
                 // Data de Inspeção 1
@@ -1869,14 +2099,17 @@
                                         field.style.pointerEvents = 'none';
                                     }
                                     
-                                    // Para selects: desabilitar mas manter texto legível
-                                    if (field.tagName === 'SELECT') {
+                                // Para selects: desabilitar mas manter texto legível
+                                // EXCETO area_responsavel_select e nome_responsavel que SEMPRE devem funcionar
+                                if (field.tagName === 'SELECT') {
+                                    if (actualId !== 'area_responsavel_select' && actualId !== 'nome_responsavel') {
                                         field.disabled = true;
                                         field.style.opacity = '1';
                                         field.style.color = '#212529';
+                                    } else {
+                                        console.log(`  Select ${actualId} mantido ATIVO (excluído do bloqueio)`);
                                     }
-                                    
-                                    // Adicionar ícone de cadeado visual
+                                }                                    // Adicionar ícone de cadeado visual
                                     const td = field.closest('td');
                                     if (td && !td.querySelector('.lock-icon')) {
                                         const lockIcon = document.createElement('span');

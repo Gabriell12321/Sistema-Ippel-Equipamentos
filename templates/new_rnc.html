@@ -1583,13 +1583,23 @@
                     </tr>
                 </table>
 
-                <!-- Linha 3: DESCRIÇÃO -->
+                <!-- Linha 3: DESCRIÇÃO DO DESENHO -->
+                <table style="margin-bottom: 0;">
+                    <tr>
+                        <td class="field-label" style="width: 100%;">DESCRIÇÃO DO DESENHO</td>
+                    </tr>
+                    <tr>
+                        <td><input type="text" name="description_drawing" class="input-field" placeholder="Descrição do desenho" data-field="description_drawing"></td>
+                    </tr>
+                </table>
+
+                <!-- Linha 4: TÍTULO DA RNC -->
                 <table style="margin-bottom: 0;">
                     <tr>
                         <td class="field-label" style="width: 100%;">DESCRIÇÃO</td>
                     </tr>
                     <tr>
-                        <td><input type="text" name="description_drawing" class="input-field" placeholder="Descrição do desenho" data-field="description_drawing"></td>
+                        <td><input type="text" name="title" class="input-field" placeholder="Título resumido da RNC (ex: REVISÃO NA QUANTIDADE DA POSIÇÃO 19...)" data-field="title"></td>
                     </tr>
                 </table>
 
@@ -3386,10 +3396,10 @@
         document.addEventListener('DOMContentLoaded', function() {
             const cvInput = document.querySelector('[data-field="cv"]');
             if (cvInput) {
-                cvInput.setAttribute('maxlength', '20');
+                cvInput.setAttribute('maxlength', '11');
                 cvInput.addEventListener('input', function() {
                     // Permite números e letras (alfanumérico) e limita a 20 caracteres
-                    this.value = this.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 20).toUpperCase();
+                    this.value = this.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 11).toUpperCase();
                 });
             }
         });
