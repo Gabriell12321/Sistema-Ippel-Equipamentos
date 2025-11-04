@@ -1212,17 +1212,28 @@
                 const payload = await resp.json();
                 if (payload && payload.success && Array.isArray(payload.groups)) {
                     const grp = payload.groups.find(g => String(g.id) === String(selectedGroupId));
+                    const assResponsavelInput = document.getElementById('ass_responsavel');
                     if (grp && grp.manager_name) {
-                        const assResponsavelInput = document.getElementById('ass_responsavel');
-                        if (assResponsavelInput && (!assResponsavelInput.value || assResponsavelInput.value.trim() === '')) {
-                            assResponsavelInput.value = grp.manager_name;
-                            console.log(' Assinatura responsável preenchida automaticamente:', grp.manager_name);
-                            if (typeof mostrarNotificacao === 'function') mostrarNotificacao(` Assinatura preenchida: ${grp.manager_name}`, 'success');
-                        }
+                        // Igual à criação: sempre sincroniza com o gerente do setor selecionado
+                        if (assResponsavelInput) assResponsavelInput.value = grp.manager_name;
+                        console.log(' Assinatura responsável definida pelo setor:', grp.manager_name);
+                        if (typeof mostrarNotificacao === 'function') mostrarNotificacao(` Assinatura do responsável: ${grp.manager_name}`, 'success');
                     } else {
                         console.warn(' Nenhum gerente definido para este setor');
+                        if (assResponsavelInput) assResponsavelInput.value = '';
                         if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Nenhum gerente definido para este setor', 'error');
                     }
+                    // Atualizar a data de emissão para hoje (mesmo comportamento da criação)
+                    try {
+                        const dataEmissaoInput = document.getElementById('data_emissao');
+                        if (dataEmissaoInput) {
+                            const hoje = new Date();
+                            const d = String(hoje.getDate()).padStart(2,'0');
+                            const m = String(hoje.getMonth()+1).padStart(2,'0');
+                            const y = String(hoje.getFullYear());
+                            dataEmissaoInput.value = `${d}/${m}/${y}`;
+                        }
+                    } catch(_) {}
                 } else {
                     console.warn(' Resposta inválida de /api/admin/groups/with-managers');
                 }
@@ -1273,7 +1284,8 @@
                     groupUsers.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
                     groupUsers.forEach(u => {
                         const opt = document.createElement('option');
-                        opt.value = u.name;
+                        // Igual à criação: value deve ser o ID do usuário
+                        opt.value = u.id;
                         opt.textContent = `${u.name}${u.department ? ' ('+u.department+')' : ''}`;
                         nomeResponsavelSelect.appendChild(opt);
                     });
@@ -1460,15 +1472,45 @@
                 formData.purchase_order = document.getElementById('purchase_order')?.value || '';
             }
             
-            // Responsabilidades
-            if (!disabledFieldNames.has('responsavel')) {
-                formData.responsavel = document.getElementById('responsavel')?.value || '';
-            }
+            // Responsabilidades (igualar à criação)
+            // Inspetor (input sem id fixo)
             if (!disabledFieldNames.has('inspetor')) {
-                formData.inspetor = document.getElementById('inspetor')?.value || '';
+                const insp = document.querySelector('input[name="inspetor"]');
+                if (insp && insp.value) formData.inspetor = insp.value;
             }
+            // Área responsável (select usa IDs)
             if (!disabledFieldNames.has('area_responsavel')) {
-                formData.area_responsavel = document.getElementById('area_responsavel')?.value || '';
+                const areaSel = document.getElementById('area_responsavel_select');
+                if (areaSel && areaSel.value) {
+                    formData.area_responsavel = String(areaSel.value);
+                }
+            }
+            // Assinatura responsável (texto preenchido automaticamente com gerente ao trocar setor)
+            if (!disabledFieldNames.has('ass_responsavel')) {
+                const ar = document.getElementById('ass_responsavel');
+                if (ar && ar.value) formData.ass_responsavel = ar.value;
+            }
+            // Nome causador (dropdown por usuário) → enviar id e nome
+            if (!disabledFieldNames.has('responsavel')) {
+                const nomeRespSel = document.getElementById('nome_responsavel');
+                if (nomeRespSel && nomeRespSel.value) {
+                    const raw = String(nomeRespSel.value);
+                    const isId = /^\d+$/.test(raw);
+                    let userObj = null;
+                    if (isId) {
+                        userObj = (window.allUsers||[]).find(u => String(u.id) === raw) || null;
+                    } else {
+                        userObj = (window.allUsers||[]).find(u => String(u.name).toLowerCase() === raw.toLowerCase()) || null;
+                    }
+                    if (userObj) {
+                        formData.responsavel = String(userObj.id);
+                        formData.causador_user_id = userObj.id;
+                        formData.nome_responsavel = userObj.name;
+                    } else {
+                        // Fallback: enviar o valor bruto ao menos como nome
+                        formData.nome_responsavel = raw;
+                    }
+                }
             }
             if (!disabledFieldNames.has('created_at')) {
                 formData.created_at = document.getElementById('created_at')?.value || '';
