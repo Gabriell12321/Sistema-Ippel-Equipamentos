@@ -1230,6 +1230,58 @@
                 console.error(' Erro ao buscar gerente:', error);
                 if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Erro ao buscar gerente do setor', 'error');
             }
+
+            // Atualizar dropdown de NOME CAUSADOR com usuários do grupo selecionado
+            try {
+                const nomeResponsavelSelect = document.getElementById('nome_responsavel');
+                const assinaturaLiderInput = document.getElementById('assinatura_lider');
+
+                if (nomeResponsavelSelect) {
+                    // Limpar dropdown
+                    nomeResponsavelSelect.innerHTML = '<option value="">Selecione o Usuário Causador</option>';
+                    nomeResponsavelSelect.disabled = true;
+
+                    // Limpar assinatura do causador ao trocar setor
+                    if (assinaturaLiderInput) assinaturaLiderInput.value = '';
+
+                    // Garantir usuários carregados
+                    if (!window.allUsers || window.allUsers.length === 0) {
+                        try {
+                            const usersResponse = await fetch('/api/users/list', { credentials: 'include' });
+                            const usersData = await usersResponse.json();
+                            if (usersData && usersData.success && Array.isArray(usersData.users)) {
+                                window.allUsers = usersData.users;
+                            }
+                        } catch (_) {}
+                    }
+
+                    // Filtrar usuários por grupo (suporte a vários formatos)
+                    const groupUsers = (window.allUsers || []).filter(user => {
+                        if (!user) return false;
+                        const gid = parseInt(selectedGroupId);
+                        if (Array.isArray(user.groups)) {
+                            return user.groups.some(g => (g && typeof g === 'object' ? parseInt(g.id) === gid : parseInt(g) === gid));
+                        }
+                        if (Array.isArray(user.group_ids)) {
+                            return user.group_ids.some(x => parseInt(x) === gid);
+                        }
+                        // Fallback: user.group_id
+                        if (user.group_id) return parseInt(user.group_id) === gid;
+                        return false;
+                    });
+
+                    groupUsers.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
+                    groupUsers.forEach(u => {
+                        const opt = document.createElement('option');
+                        opt.value = u.name;
+                        opt.textContent = `${u.name}${u.department ? ' ('+u.department+')' : ''}`;
+                        nomeResponsavelSelect.appendChild(opt);
+                    });
+                    nomeResponsavelSelect.disabled = false;
+                }
+            } catch (e) {
+                console.warn(' Falha ao atualizar lista de usuários do setor selecionado', e);
+            }
         }
         
         // Função chamada quando o nome do responsável é alterado (causador)
@@ -1905,8 +1957,8 @@
             // Carregar usuários para o select de atribuição
             loadAssignedUsers();
             
-            // Carregar grupos (setores) para o select de área responsável PRIMEIRO
-            console.log('Chamando loadGroups()...');
+            // Carregar grupos (setores) e usuários; depois sincronizar seleção atual
+            console.log('Carregando grupos e usuários...');
             console.log('Valores disponíveis do backend:');
             console.log('  area_responsavel:', "{{ rnc.area_responsavel or '' }}");
             console.log('  area_responsavel_name:', "{{ rnc.area_responsavel_name or '' }}");
@@ -1916,19 +1968,13 @@
             console.log('  responsavel:', "{{ rnc.responsavel or '' }}");
             console.log('  causador_name:', "{{ rnc.causador_name or '' }}");
             
-            loadGroups().then(() => {
-                console.log('loadGroups finalizado');
-            }).catch(err => {
-                console.error('Erro em loadGroups:', err);
-            });
-            
-            // Carregar usuários para o select de nome causador PRIMEIRO
-            console.log('Chamando loadUsers()...');
-            loadUsers().then(() => {
-                console.log('loadUsers finalizado');
-            }).catch(err => {
-                console.error('Erro em loadUsers:', err);
-            });
+            Promise.all([loadGroups(), loadUsers()]).then(() => {
+                console.log('Grupos e usuários carregados');
+                const sel = document.getElementById('area_responsavel_select');
+                if (sel && sel.value) {
+                    onAreaResponsavelChange();
+                }
+            }).catch(err => console.error('Erro ao carregar grupos/usuários', err));
 
             // PREENCHER DATAS DE ASSINATURA DO BANCO DE DADOS
             console.log(' Carregando datas de assinatura...');
