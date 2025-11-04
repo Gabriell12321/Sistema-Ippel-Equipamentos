@@ -313,13 +313,16 @@
                         });
                         
                         // ASSINATURAS CABEÇALHO - Coletar campos corretamente
-                        // 1. Setor Responsável (converter nome para ID)
+                        // 1. Setor Responsável (valor é o ID – igual ao new_rnc.html)
                         var areaSel = document.getElementById('area_responsavel_select');
                         if (areaSel && areaSel.value) {
-                            // Buscar o ID do grupo pelo nome
-                            const selectedGroupName = areaSel.value;
-                            const selectedGroup = window.allGroups ? window.allGroups.find(g => g.name === selectedGroupName) : null;
-                            formData.area_responsavel = selectedGroup ? selectedGroup.id : selectedGroupName;
+                            let val = areaSel.value;
+                            // Se por algum motivo for um nome (fallback), resolver para ID
+                            if (!/^\d+$/.test(String(val)) && Array.isArray(window.allGroups)) {
+                                const hit = window.allGroups.find(g => (g.name || '').toLowerCase() === String(val).toLowerCase());
+                                if (hit) val = String(hit.id);
+                            }
+                            formData.area_responsavel = val;
                         }
                         
                         // 2. Assinatura Responsável
@@ -1196,40 +1199,36 @@
         async function onAreaResponsavelChange() {
             console.log(' Setor responsável alterado');
             const select = document.getElementById('area_responsavel_select');
-            const selectedGroup = select.value;
+            const selectedGroupId = select.value; // agora é ID
             
-            if (!selectedGroup) {
+            if (!selectedGroupId) {
                 console.log(' Nenhum setor selecionado');
                 return;
             }
             
-            console.log(' Buscando gerente do grupo:', selectedGroup);
-            
             try {
-                // Buscar o gerente do grupo selecionado
-                const response = await fetch(`/admin/managers/api/group/${encodeURIComponent(selectedGroup)}/manager`, {
-                    credentials: 'include'
-                });
-                
-                const data = await response.json();
-                
-                if (data.success && data.manager) {
-                    console.log(' Gerente encontrado:', data.manager.name);
-                    
-                    // Preencher assinatura automaticamente
-                    const assResponsavelInput = document.getElementById('ass_responsavel');
-                    if (assResponsavelInput && (!assResponsavelInput.value || assResponsavelInput.value.trim() === '')) {
-                        assResponsavelInput.value = data.manager.name;
-                        console.log(' Assinatura responsável preenchida automaticamente:', data.manager.name);
-                        mostrarNotificacao(` Assinatura preenchida: ${data.manager.name}`, 'success');
+                // Buscar todos os grupos com gerentes e pegar pelo ID
+                const resp = await fetch('/api/admin/groups/with-managers', { credentials: 'include' });
+                const payload = await resp.json();
+                if (payload && payload.success && Array.isArray(payload.groups)) {
+                    const grp = payload.groups.find(g => String(g.id) === String(selectedGroupId));
+                    if (grp && grp.manager_name) {
+                        const assResponsavelInput = document.getElementById('ass_responsavel');
+                        if (assResponsavelInput && (!assResponsavelInput.value || assResponsavelInput.value.trim() === '')) {
+                            assResponsavelInput.value = grp.manager_name;
+                            console.log(' Assinatura responsável preenchida automaticamente:', grp.manager_name);
+                            if (typeof mostrarNotificacao === 'function') mostrarNotificacao(` Assinatura preenchida: ${grp.manager_name}`, 'success');
+                        }
+                    } else {
+                        console.warn(' Nenhum gerente definido para este setor');
+                        if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Nenhum gerente definido para este setor', 'error');
                     }
                 } else {
-                    console.warn(' Nenhum gerente definido para este setor');
-                    mostrarNotificacao(' Nenhum gerente definido para este setor', 'error');
+                    console.warn(' Resposta inválida de /api/admin/groups/with-managers');
                 }
             } catch (error) {
                 console.error(' Erro ao buscar gerente:', error);
-                mostrarNotificacao(' Erro ao buscar gerente do setor', 'error');
+                if (typeof mostrarNotificacao === 'function') mostrarNotificacao(' Erro ao buscar gerente do setor', 'error');
             }
         }
         
@@ -1717,124 +1716,55 @@
             }
         }
 
-        // Carregar grupos (setores) para o select de área responsável
+        // Carregar grupos (setores) para o select de área responsável — igual à criação (new_rnc.html)
         async function loadGroups() {
-            console.log('loadGroups iniciado');
+            console.log('[edit] loadGroups iniciado');
             try {
-                console.log('Fazendo fetch para /admin/managers/api/groups');
-                const response = await fetch('/admin/managers/api/groups', { credentials: 'include' });
-                console.log('Response status:', response.status);
-                
+                console.log('[edit] Fetch /api/groups');
+                const response = await fetch('/api/groups', { credentials: 'include' });
                 const data = await response.json();
-                console.log('Data recebida:', data);
-                
-                if (data && data.success && data.groups) {
-                    console.log('Grupos encontrados:', data.groups.length);
-                    
-                    // Armazenar globalmente para conversão nome→ID no submit
+                if (data && data.success && Array.isArray(data.groups)) {
+                    // Guardar globalmente para mapeamentos
                     window.allGroups = data.groups;
-                    
+
                     const select = document.getElementById('area_responsavel_select');
-                    console.log('Select encontrado:', select);
-                    
-                    if (select) {
-                        console.log('Opções antes de limpar:', select.options.length);
-                        
-                        // Limpar opções existentes (exceto a primeira)
-                        while (select.options.length > 1) {
-                            select.remove(1);
-                        }
-                        
-                        console.log('Opções após limpar:', select.options.length);
-                        
-                        // Adicionar grupos
-                        data.groups.forEach(group => {
-                            const option = document.createElement('option');
-                            option.value = group.name;
-                            option.textContent = group.name;
-                            select.appendChild(option);
-                            console.log('Adicionado grupo:', group.name);
-                        });
-                        
-                        console.log('Opções após adicionar:', select.options.length);
-                        
-                        // Selecionar o grupo atual se houver (robusto: aceita nome com/sem acento e também ID)
-                        // Prioriza area_responsavel_name (nome resolvido), depois area_responsavel (ID)
-                        const currentGroupName = "{{ rnc.area_responsavel_name or '' }}";
-                        const currentGroupId = "{{ rnc.area_responsavel or '' }}";
-                        const currentGroup = currentGroupName || currentGroupId;
-                        
-                        if (currentGroup) {
-                            const norm = (s) => (s || '').toString().trim().toLowerCase();
-                            const onlyDigits = /^\d+$/;
-
-                            let applied = false;
-
-                            // 1) Tentar por valor direto (nome igual)
-                            for (const opt of Array.from(select.options)) {
-                                if (norm(opt.value) === norm(currentGroup)) {
-                                    select.value = opt.value;
-                                    applied = true;
-                                    break;
-                                }
-                            }
-
-                            // 2) Tentar por texto visível
-                            if (!applied) {
-                                for (const opt of Array.from(select.options)) {
-                                    if (norm(opt.textContent) === norm(currentGroup)) {
-                                        select.value = opt.value;
-                                        applied = true;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            // 3) Caso seja um ID de grupo salvo em area_responsavel
-                            if (!applied && onlyDigits.test(String(currentGroupId))) {
-                                const match = (data.groups || []).find(g => String(g.id) === String(currentGroupId));
-                                if (match) {
-                                    select.value = match.name;
-                                    applied = true;
-                                }
-                            }
-
-                            // 4) Fallback: contém parcial (ex.: "Engenhar" casa com "Engenharia")
-                            if (!applied) {
-                                for (const opt of Array.from(select.options)) {
-                                    if (norm(opt.textContent).includes(norm(currentGroup))) {
-                                        select.value = opt.value;
-                                        applied = true;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            console.log('Grupo atual alvo:', currentGroup, 'aplicado:', applied, 'valor final:', select.value);
-
-                            // 5) Se ainda não aplicou, criar uma opção fallback com o valor atual vindo da visualização
-                            if (!applied && currentGroup) {
-                                const opt = document.createElement('option');
-                                opt.value = currentGroup;
-                                opt.textContent = currentGroup;
-                                opt.selected = true;
-                                select.appendChild(opt);
-                                console.log('Adicionada opção fallback para setor responsável:', currentGroup);
-                            }
-
-                            // Preencher assinatura do responsável automaticamente se campo vazio
-                            // Não sobrescrever assinatura já existente; apenas manter seleção do setor
-                        }
-                        
-                        console.log('Select de grupos populado com', data.groups.length, 'grupos');
-                    } else {
-                        console.error('Select area_responsavel_select não encontrado');
+                    if (!select) {
+                        console.error('[edit] Select area_responsavel_select não encontrado');
+                        return;
                     }
+
+                    // Resetar opções
+                    select.innerHTML = '<option value="">Selecione a Área Responsável</option>';
+
+                    // Popular com ID como value e nome como label (como em new_rnc)
+                    data.groups.forEach(g => {
+                        const opt = document.createElement('option');
+                        opt.value = g.id; // valor canônico é o ID
+                        opt.textContent = g.name;
+                        opt.dataset.groupName = g.name;
+                        select.appendChild(opt);
+                    });
+
+                    // Selecionar valor atual
+                    const currentGroupIdRaw = "{{ rnc.area_responsavel or '' }}";
+                    const currentGroupName = "{{ rnc.area_responsavel_name or '' }}";
+                    let selectedId = '';
+                    if (currentGroupIdRaw && String(currentGroupIdRaw).match(/^\d+$/)) {
+                        selectedId = String(currentGroupIdRaw);
+                    } else if (currentGroupName) {
+                        const hit = (data.groups || []).find(g => (g.name || '').toLowerCase() === currentGroupName.toLowerCase());
+                        if (hit) selectedId = String(hit.id);
+                    }
+                    if (selectedId) {
+                        select.value = selectedId;
+                    }
+
+                    console.log('[edit] Grupos carregados:', data.groups.length, 'selecionado:', select.value);
                 } else {
-                    console.error('Dados inválidos:', data);
+                    console.error('[edit] Resposta inválida de /api/groups', data);
                 }
-            } catch (error) {
-                console.error('Erro ao carregar grupos:', error);
+            } catch (e) {
+                console.error('[edit] Erro ao carregar grupos', e);
             }
         }
 
