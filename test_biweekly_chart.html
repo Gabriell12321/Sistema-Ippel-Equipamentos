@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste - Gráfico de Quinzenas</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        select, button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        button {
+            background: #dc3545;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        button:hover {
+            background: #b21f35;
+        }
+        .indicators {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .indicator {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .indicator-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #333;
+        }
+        .indicator-label {
+            font-size: 11px;
+            color: #666;
+            margin-top: 4px;
+        }
+        #chartContainer {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 400px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚦 Teste do Gráfico de RNCs por Quinzena</h1>
+        
+        <div class="controls">
+            <label>Ano:</label>
+            <select id="yearSelect">
+                <option value="2025">2025</option>
+                <option value="2024">2024</option>
+                <option value="2023">2023</option>
+            </select>
+            
+            <label>Mês:</label>
+            <select id="monthSelect">
+                <option value="01">Janeiro</option>
+                <option value="02">Fevereiro</option>
+                <option value="03">Março</option>
+                <option value="04">Abril</option>
+                <option value="05">Maio</option>
+                <option value="06">Junho</option>
+                <option value="07">Julho</option>
+                <option value="08">Agosto</option>
+                <option value="09">Setembro</option>
+                <option value="10">Outubro</option>
+                <option value="11">Novembro</option>
+                <option value="12">Dezembro</option>
+            </select>
+            
+            <button onclick="loadChart()">Gerar Gráfico</button>
+            <button onclick="testWithData()">Teste com Dados</button>
+        </div>
+
+        <div id="indicators" class="indicators" style="display: none;">
+            <div class="indicator" style="background: #e3f2fd;">
+                <div id="totalValue" class="indicator-value">0</div>
+                <div class="indicator-label">Total no Mês</div>
+            </div>
+            <div class="indicator" style="background: #f3e5f5;">
+                <div id="firstValue" class="indicator-value">0</div>
+                <div class="indicator-label">1ª Quinzena</div>
+            </div>
+            <div class="indicator" style="background: #e8f5e8;">
+                <div id="secondValue" class="indicator-value">0</div>
+                <div class="indicator-label">2ª Quinzena</div>
+            </div>
+            <div class="indicator" style="background: #fff3e0;">
+                <div id="avgValue" class="indicator-value">0</div>
+                <div class="indicator-label">Média/Dia</div>
+            </div>
+        </div>
+
+        <div id="chartContainer">
+            <canvas id="biweeklyChart"></canvas>
+        </div>
+
+        <div id="status" style="margin-top: 20px; padding: 10px; background: #e9ecef; border-radius: 6px;">
+            Status: Aguardando ação...
+        </div>
+    </div>
+
+    <script>
+        let biweeklyChart = null;
+
+        // Definir valores padrão
+        document.getElementById('yearSelect').value = '2025';
+        document.getElementById('monthSelect').value = String(new Date().getMonth() + 1).padStart(2, '0');
+
+        function updateStatus(message) {
+            document.getElementById('status').innerHTML = `Status: ${message}`;
+            console.log('Status:', message);
+        }
+
+        function updateIndicators(data) {
+            const indicators = document.getElementById('indicators');
+            document.getElementById('totalValue').textContent = data.total;
+            document.getElementById('firstValue').textContent = data.quinzenas[0].count;
+            document.getElementById('secondValue').textContent = data.quinzenas[1].count;
+            
+            const totalDays = new Date(parseInt(data.period.split('/')[1]), parseInt(data.period.split('/')[0]), 0).getDate();
+            const average = (data.total / totalDays).toFixed(1);
+            document.getElementById('avgValue').textContent = average;
+            
+            indicators.style.display = 'grid';
+        }
+
+        async function loadChart() {
+            const year = document.getElementById('yearSelect').value;
+            const month = document.getElementById('monthSelect').value;
+            
+            updateStatus(`Carregando dados para ${month}/${year}...`);
+            
+            try {
+                const response = await fetch(`/api/charts/biweekly-data?year=${year}&month=${month}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    updateStatus(`Erro: ${data.error}`);
+                    return;
+                }
+                
+                updateStatus(`Dados carregados. Total de RNCs: ${data.total}`);
+                updateIndicators(data);
+                createChart(data);
+                
+            } catch (error) {
+                updateStatus(`Erro de conexão: ${error.message}`);
+                console.error('Erro:', error);
+            }
+        }
+
+        function testWithData() {
+            updateStatus('Gerando gráfico com dados de teste...');
+            
+            const testData = {
+                period: "11/2025",
+                quinzenas: [
+                    {
+                        label: "1ª Quinzena (01-15/11)",
+                        count: 7,
+                        days: 10,
+                        average: 0.47
+                    },
+                    {
+                        label: "2ª Quinzena (16-31/11)",
+                        count: 12,
+                        days: 8,
+                        average: 0.75
+                    }
+                ],
+                total: 19
+            };
+            
+            updateIndicators(testData);
+            createChart(testData);
+            updateStatus('Gráfico de teste criado com sucesso!');
+        }
+
+        function createChart(data) {
+            const canvas = document.getElementById('biweeklyChart');
+            const ctx = canvas.getContext('2d');
+            
+            // Destruir gráfico anterior
+            if (biweeklyChart) {
+                biweeklyChart.destroy();
+            }
+            
+            const chartData = {
+                labels: data.quinzenas.map(q => q.label),
+                datasets: [{
+                    label: 'RNCs por Quinzena',
+                    data: data.quinzenas.map(q => q.count),
+                    backgroundColor: [
+                        'rgba(156, 39, 176, 0.8)',
+                        'rgba(76, 175, 80, 0.8)'
+                    ],
+                    borderColor: [
+                        'rgba(156, 39, 176, 1)',
+                        'rgba(76, 175, 80, 1)'
+                    ],
+                    borderWidth: 2,
+                    borderRadius: 8,
+                    borderSkipped: false
+                }]
+            };
+            
+            const options = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: `RNCs por Quinzena - ${data.period}`,
+                        font: { size: 16, weight: 'bold' },
+                        color: '#333'
+                    },
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const quinzena = data.quinzenas[context.dataIndex];
+                                return [
+                                    `Dias com RNCs: ${quinzena.days}`,
+                                    `Média/dia: ${quinzena.average.toFixed(2)}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { stepSize: 1 },
+                        title: {
+                            display: true,
+                            text: 'Quantidade de RNCs',
+                            font: { size: 14, weight: 'bold' }
+                        }
+                    },
+                    x: {
+                        grid: { display: false }
+                    }
+                },
+                animation: {
+                    duration: 1000,
+                    easing: 'easeInOutQuart'
+                }
+            };
+            
+            try {
+                biweeklyChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: chartData,
+                    options: options
+                });
+                
+                console.log('Gráfico criado com sucesso!');
+            } catch (error) {
+                updateStatus(`Erro ao criar gráfico: ${error.message}`);
+                console.error('Erro ao criar gráfico:', error);
+            }
+        }
+
+        // Carregar automaticamente ao abrir a página
+        window.onload = function() {
+            testWithData();
+        };
+    </script>
+</body>
+</html>

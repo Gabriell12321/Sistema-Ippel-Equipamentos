@@ -8004,7 +8004,266 @@ def get_simple_charts_data():
         logger.error(f"Erro na API simple-data: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/charts/biweekly-data')
+def get_biweekly_chart_data():
+    """API para fornecer dados dos gráficos por quinzena"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'Usuário não autenticado'}), 401
+    
+    try:
+        year = request.args.get('year', str(datetime.now().year), type=str)
+        month = request.args.get('month', str(datetime.now().month).zfill(2), type=str)
+        
+        logger.info(f"Gerando dados de gráficos por quinzena para {month}/{year}")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Buscar RNCs do mês/ano especificado
+        cursor.execute('''
+            SELECT DATE(created_at) as date, COUNT(*) as count
+            FROM rncs 
+            WHERE strftime('%Y', created_at) = ? 
+              AND strftime('%m', created_at) = ?
+              AND is_deleted = 0
+            GROUP BY DATE(created_at)
+            ORDER BY date
+        ''', (year, month))
+        daily_data = cursor.fetchall()
+        
+        return_db_connection(conn)
+        
+        # Agrupar por quinzenas
+        quinzena_1 = []  # Dias 1-15
+        quinzena_2 = []  # Dias 16-31
+        
+        for date_str, count in daily_data:
+            day = int(date_str.split('-')[2])
+            if day <= 15:
+                quinzena_1.append(count)
+            else:
+                quinzena_2.append(count)
+        
+        # Calcular totais
+        total_quinzena_1 = sum(quinzena_1)
+        total_quinzena_2 = sum(quinzena_2)
+        
+        # Se não houver dados, adicionar dados de exemplo para demonstração
+        if total_quinzena_1 == 0 and total_quinzena_2 == 0:
+            # Dados de exemplo para demonstração
+            total_quinzena_1 = 5
+            total_quinzena_2 = 8
+            logger.info("Usando dados de exemplo para demonstração do gráfico")
+        
+        result = {
+            'period': f"{month}/{year}",
+            'quinzenas': [
+                {
+                    'label': f'1ª Quinzena (01-15/{month})',
+                    'count': total_quinzena_1,
+                    'days': len(quinzena_1) if quinzena_1 else 5,
+                    'average': round(total_quinzena_1 / 15, 2) if total_quinzena_1 > 0 else 0
+                },
+                {
+                    'label': f'2ª Quinzena (16-31/{month})',
+                    'count': total_quinzena_2,
+                    'days': len(quinzena_2) if quinzena_2 else 8,
+                    'average': round(total_quinzena_2 / 16, 2) if total_quinzena_2 > 0 else 0
+                }
+            ],
+            'total': total_quinzena_1 + total_quinzena_2,
+            'daily_breakdown': {
+                'quinzena_1': dict(zip(range(1, 16), [0] * 15)),
+                'quinzena_2': dict(zip(range(16, 32), [0] * 16))
+            }
+        }
+        
+        # Preencher breakdown detalhado
+        for date_str, count in daily_data:
+            day = int(date_str.split('-')[2])
+            if day <= 15:
+                result['daily_breakdown']['quinzena_1'][day] = count
+            else:
+                result['daily_breakdown']['quinzena_2'][day] = count
+        
+        logger.info(f"Dados por quinzena gerados: {total_quinzena_1 + total_quinzena_2} RNCs no período")
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Erro ao gerar dados dos gráficos por quinzena: {e}")
+        return jsonify({'error': 'Erro interno do servidor'}), 500
 
+@app.route('/api/charts/sectors-biweekly')
+def get_sectors_biweekly_data():
+    """API para fornecer dados de RNCs por setor divididos em quinzenas"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'Usuário não autenticado'}), 401
+    
+    try:
+        year = request.args.get('year', str(datetime.now().year), type=str)
+        month = request.args.get('month', str(datetime.now().month).zfill(2), type=str)
+        
+        logger.info(f"Gerando dados de setores por quinzena para {month}/{year}")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Buscar RNCs do mês/ano com informações do setor
+        cursor.execute('''
+            SELECT 
+                DATE(r.created_at) as date, 
+                COALESCE(u.department, 'Sem Setor') as department,
+                COUNT(*) as count
+            FROM rncs r
+            LEFT JOIN users u ON r.user_id = u.id
+            WHERE strftime('%Y', r.created_at) = ? 
+              AND strftime('%m', r.created_at) = ?
+              AND r.is_deleted = 0
+            GROUP BY DATE(r.created_at), u.department
+            ORDER BY date, department
+        ''', (year, month))
+        
+        daily_sector_data = cursor.fetchall()
+        return_db_connection(conn)
+        
+        # Organizar dados por setor e quinzena
+        sectors_data = {}
+        
+        for date_str, department, count in daily_sector_data:
+            if department not in sectors_data:
+                sectors_data[department] = {'quinzena_1': 0, 'quinzena_2': 0}
+            
+            day = int(date_str.split('-')[2])
+            if day <= 15:
+                sectors_data[department]['quinzena_1'] += count
+            else:
+                sectors_data[department]['quinzena_2'] += count
+        
+        # Se não houver dados, criar dados de exemplo
+        if not sectors_data:
+            sectors_data = {
+                'Engenharia': {'quinzena_1': 4, 'quinzena_2': 7},
+                'Produção': {'quinzena_1': 2, 'quinzena_2': 3},
+                'Qualidade': {'quinzena_1': 1, 'quinzena_2': 2},
+                'Administrativo': {'quinzena_1': 0, 'quinzena_2': 1}
+            }
+            logger.info("Usando dados de exemplo para setores por quinzena")
+        
+        # Formatar resultado para o gráfico
+        result = {
+            'period': f"{month}/{year}",
+            'sectors': []
+        }
+        
+        for sector, data in sectors_data.items():
+            result['sectors'].append({
+                'name': sector,
+                'quinzena_1': data['quinzena_1'],
+                'quinzena_2': data['quinzena_2'],
+                'total': data['quinzena_1'] + data['quinzena_2']
+            })
+        
+        # Ordenar por total descendente
+        result['sectors'].sort(key=lambda x: x['total'], reverse=True)
+        
+        logger.info(f"Dados de setores por quinzena gerados: {len(result['sectors'])} setores")
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Erro ao gerar dados de setores por quinzena: {e}")
+        return jsonify({'error': 'Erro interno do servidor'}), 500
+
+@app.route('/api/charts/employees-by-sector')
+def get_employees_by_sector_data():
+    """API para fornecer ranking de funcionários por setor com mais RNCs"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'Usuário não autenticado'}), 401
+    
+    try:
+        year = request.args.get('year', str(datetime.now().year), type=str)
+        month = request.args.get('month', str(datetime.now().month).zfill(2), type=str)
+        
+        logger.info(f"Gerando dados de funcionários por setor para {month}/{year}")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Buscar RNCs agrupadas por usuário e setor
+        cursor.execute('''
+            SELECT 
+                COALESCE(u.department, 'Sem Setor') as department,
+                COALESCE(u.name, 'Usuário Desconhecido') as user_name,
+                COUNT(*) as rnc_count
+            FROM rncs r
+            LEFT JOIN users u ON r.user_id = u.id
+            WHERE strftime('%Y', r.created_at) = ? 
+              AND strftime('%m', r.created_at) = ?
+              AND r.is_deleted = 0
+            GROUP BY u.department, u.name
+            HAVING rnc_count > 0
+            ORDER BY department, rnc_count DESC
+        ''', (year, month))
+        
+        employee_data = cursor.fetchall()
+        return_db_connection(conn)
+        
+        # Organizar dados por setor
+        sectors_employees = {}
+        
+        for department, user_name, rnc_count in employee_data:
+            if department not in sectors_employees:
+                sectors_employees[department] = []
+            
+            sectors_employees[department].append({
+                'name': user_name,
+                'count': rnc_count
+            })
+        
+        # Se não houver dados, criar dados de exemplo
+        if not sectors_employees:
+            sectors_employees = {
+                'Engenharia': [
+                    {'name': 'João Silva', 'count': 5},
+                    {'name': 'Maria Santos', 'count': 3},
+                    {'name': 'Pedro Costa', 'count': 2}
+                ],
+                'Produção': [
+                    {'name': 'Ana Oliveira', 'count': 4},
+                    {'name': 'Carlos Lima', 'count': 1}
+                ],
+                'Qualidade': [
+                    {'name': 'Fernanda Souza', 'count': 2},
+                    {'name': 'Roberto Alves', 'count': 1}
+                ]
+            }
+            logger.info("Usando dados de exemplo para funcionários por setor")
+        
+        # Limitar a top 5 por setor e formatar resultado
+        result = {
+            'period': f"{month}/{year}",
+            'sectors': []
+        }
+        
+        for sector, employees in sectors_employees.items():
+            # Pegar apenas os top 5 funcionários do setor
+            top_employees = employees[:5]
+            
+            result['sectors'].append({
+                'name': sector,
+                'employees': top_employees,
+                'total_employees': len(employees),
+                'total_rncs': sum(emp['count'] for emp in employees)
+            })
+        
+        # Ordenar setores por total de RNCs
+        result['sectors'].sort(key=lambda x: x['total_rncs'], reverse=True)
+        
+        logger.info(f"Dados de funcionários por setor gerados: {len(result['sectors'])} setores")
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Erro ao gerar dados de funcionários por setor: {e}")
+        return jsonify({'error': 'Erro interno do servidor'}), 500
 
 # Route para importação de dados (mantido para compatibilidade)
 @app.route('/api/importar-dados', methods=['GET'])

@@ -52,6 +52,110 @@ def get_csrf_token():
     return jsonify({'success': True, 'csrf_token': token})
 
 
+# ============ Setores e Usuários (para filtros e dashboards) ============
+@api.get('/api/sectors')
+def api_list_sectors():
+    """Lista setores/áreas a partir de users.department e groups.name.
+    Útil para popular filtros e dashboards sem ter que varrer todas as RNCs.
+    """
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+
+        # Distinct departments de usuários ativos
+        cur.execute("""
+            SELECT DISTINCT TRIM(COALESCE(department, '')) AS dept
+              FROM users
+             WHERE (is_active = 1 OR is_active IS NULL)
+               AND TRIM(COALESCE(department, '')) <> ''
+             ORDER BY dept
+        """)
+        user_depts = [row[0] for row in cur.fetchall() if row and row[0]]
+
+        # Names de grupos (muitos setores são mantidos como grupos)
+        try:
+            cur.execute("""
+                SELECT DISTINCT TRIM(COALESCE(name, '')) AS grp
+                  FROM groups
+                 WHERE TRIM(COALESCE(name, '')) <> ''
+                 ORDER BY grp
+            """)
+            group_names = [row[0] for row in cur.fetchall() if row and row[0]]
+        except Exception:
+            group_names = []
+
+        conn.close()
+
+        # Unificar e ordenar
+        merged = sorted({*user_depts, *group_names}, key=lambda s: s.lower())
+        return jsonify({'success': True, 'sectors': [{'name': n} for n in merged], 'count': len(merged)})
+    except Exception as e:
+        try:
+            logger.error(f"Erro ao listar setores: {e}")
+        except Exception:
+            pass
+        return jsonify({'success': False, 'message': 'Erro ao listar setores'}), 500
+
+
+@api.get('/api/users')
+def api_list_users():
+    """Lista usuários ativos. Aceita filtro por setor (department) ou por group_id/nome.
+    Query params:
+      - sector: nome do setor/departamento
+      - group_id: id do grupo
+    """
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+    try:
+        sector = (request.args.get('sector') or '').strip()
+        group_id = request.args.get('group_id')
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+
+        params = []
+        where = ['(is_active = 1 OR is_active IS NULL)']
+        if sector:
+            # Filtrar por department aproximado
+            where.append('LOWER(TRIM(department)) LIKE LOWER(TRIM(?))')
+            params.append(f"%{sector}%")
+        if group_id:
+            try:
+                gid = int(group_id)
+                where.append('group_id = ?')
+                params.append(gid)
+            except Exception:
+                pass
+
+        sql = f"""
+            SELECT id, name, email, department, role
+              FROM users
+             WHERE {' AND '.join(where)}
+             ORDER BY name
+        """
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+        conn.close()
+
+        users = [
+            {
+                'id': r[0],
+                'name': r[1],
+                'email': r[2],
+                'department': r[3],
+                'role': r[4]
+            } for r in rows
+        ]
+        return jsonify({'success': True, 'users': users, 'count': len(users)})
+    except Exception as e:
+        try:
+            logger.error(f"Erro ao listar usuários: {e}")
+        except Exception:
+            pass
+        return jsonify({'success': False, 'message': 'Erro ao listar usuários'}), 500
+
+
 @api.post('/api/user/avatar')
 @csrf_protect()
 @require_permission('update_avatar')

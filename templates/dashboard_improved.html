@@ -2,360 +2,10 @@
 <html>
 <head>
     <title>IPPEL - Sistema de RNC</title>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script>
-        // Tratamento precoce de erros de extensões do navegador
-        (function() {
-            const originalError = console.error;
-            const originalWarn = console.warn;
-            
-            console.error = function(...args) {
-                const msg = args && args[0] ? String(args[0]) : '';
-                // Silenciar erros conhecidos de extensões (SVG, translateContent, etc)
-                if (msg.includes('attribute d') || 
-                    msg.includes('Expected number') ||
-                    msg.includes('translateContent') ||
-                    msg.includes('tc0.2,0,0.4-0.2,0') ||
-                    msg.includes('jquery.js') ||
-                    msg.includes('SVG') ||
-                    msg.includes('path') ||
-                    msg.includes('d: Expected')) {
-                    return;
-                }
-                return originalError.apply(console, args);
-            };
-            
-            console.warn = function(...args) {
-                const msg = args && args[0] ? String(args[0]) : '';
-                if (msg.includes('attribute d') || 
-                    msg.includes('Expected number') ||
-                    msg.includes('translateContent') ||
-                    msg.includes('tc0.2,0,0.4-0.2,0') ||
-                    msg.includes('jquery.js') ||
-                    msg.includes('SVG') ||
-                    msg.includes('path')) {
-                    return;
-                }
-                return originalWarn.apply(console, args);
-            };
-        })();
-    </script>
-    <script>
-        async function openClientSuggestions() {
-            const clients = await ensureClientsLoaded();
-            const box = document.getElementById('filterClientSuggestions');
-            if (!box) return;
-            populateClientSuggestions(clients);
-            box.style.display = 'block';
-            setTimeout(()=>{
-                document.addEventListener('click', _closeClientSuggestionsOnClick);
-            }, 10);
-        }
-
-        function _closeClientSuggestionsOnClick(e){
-            const box = document.getElementById('filterClientSuggestions');
-            const input = document.getElementById('filterClient');
-            if (!box || !input) return;
-            if (box.contains(e.target) || input === e.target) return;
-            box.style.display = 'none';
-            document.removeEventListener('click', _closeClientSuggestionsOnClick);
-        }
-
-        function populateClientSuggestions(list){
-            const box = document.getElementById('filterClientSuggestions');
-            if (!box) return;
-            box.innerHTML = '';
-            if (!Array.isArray(list) || list.length === 0) {
-                box.innerHTML = '<div style="padding:10px;color:#666">Nenhum cliente</div>';
-                return;
-            }
-            list.slice(0,200).forEach(c=>{
-                const row = document.createElement('div');
-                row.style.padding = '8px 10px';
-                row.style.cursor = 'pointer';
-                row.style.borderBottom = '1px solid #f3f3f3';
-                row.textContent = c.name || '';
-                row.onclick = function(){
-                    const input = document.getElementById('filterClient');
-                    if (input) input.value = c.name || '';
-                    const sug = document.getElementById('filterClientSuggestions');
-                    if (sug) sug.style.display = 'none';
-                    applyFilters();
-                };
-                box.appendChild(row);
-            });
-        }
-
-        function filterClientSuggestions(q){
-            const list = window._allClientsForFilters || [];
-            if (!q) return populateClientSuggestions(list);
-            const lower = q.toLowerCase();
-            const filtered = list.filter(c => (c.name||'').toLowerCase().includes(lower));
-            populateClientSuggestions(filtered);
-        }
-
-        async function ensureClientsLoaded() {
-            if (window._allClientsForFilters && window._allClientsForFilters.length > 0) {
-                console.log(' Clientes já carregados:', window._allClientsForFilters.length);
-                return window._allClientsForFilters;
-            }
-            
-            try {
-                console.log(' Buscando clientes das RNCs...');
-                const response = await fetch('/api/rnc/list?tab=finalized&limit=5000');
-                const data = await response.json();
-                
-                console.log(' Resposta recebida:', data);
-                console.log(' Total de RNCs:', data?.rncs?.length || 0);
-                
-                if (data && Array.isArray(data.rncs)) {
-                    const clientsSet = new Set();
-                    
-                    data.rncs.forEach((rnc, index) => {
-                        if (index === 0) {
-                            console.log(' Amostra da primeira RNC:', rnc);
-                        }
-                        
-                        const clientName = rnc.cliente || rnc.client || rnc.client_name;
-                        if (clientName && clientName.trim() !== '') {
-                            clientsSet.add(clientName.trim());
-                        }
-                    });
-                    
-                    window._allClientsForFilters = Array.from(clientsSet).sort().map(name => ({
-                        name: name
-                    }));
-                    
-                    console.log(' Clientes únicos encontrados:', window._allClientsForFilters.length);
-                    console.log(' Lista de clientes:', window._allClientsForFilters);
-                    
-                    return window._allClientsForFilters;
-                }
-            } catch(err) {
-                console.error(' Erro ao carregar clientes:', err);
-            }
-            
-            return [];
-        }
-
-        async function ensureClientsLoadedSelect() {
-            const select = document.getElementById('filterClientSelect');
-            if (!select) return;
-            
-            if (select.options.length > 1) return;
-            
-            const clients = await ensureClientsLoaded();
-            
-            clients.forEach(c => {
-                const opt = document.createElement('option');
-                opt.value = c.name || '';
-                opt.textContent = c.name || '';
-                select.appendChild(opt);
-            });
-        }
-
-        async function ensureSectorsLoaded() {
-            if (window._allSectorsForFilters && window._allSectorsForFilters.length > 0) {
-                console.log(' Setores já carregados:', window._allSectorsForFilters.length);
-                return window._allSectorsForFilters;
-            }
-            
-            try {
-                console.log(' Buscando setores das RNCs...');
-                const response = await fetch('/api/rnc/list?tab=finalized&limit=5000');
-                const data = await response.json();
-                
-                console.log(' Resposta recebida para setores:', data);
-                console.log(' Total de RNCs:', data?.rncs?.length || 0);
-                
-                if (data && Array.isArray(data.rncs)) {
-                    const sectorsSet = new Set();
-                    
-                    data.rncs.forEach((rnc, index) => {
-                        if (index === 0) {
-                            console.log(' Amostra da primeira RNC (setores):', rnc);
-                        }
-                        
-                        const sectorName = rnc.setor || rnc.department || rnc.sector;
-                        if (sectorName && sectorName.trim() !== '') {
-                            sectorsSet.add(sectorName.trim());
-                        }
-                    });
-                    
-                    window._allSectorsForFilters = Array.from(sectorsSet).sort().map(name => ({
-                        name: name
-                    }));
-                    
-                    console.log(' Setores únicos encontrados:', window._allSectorsForFilters.length);
-                    console.log(' Lista de setores:', window._allSectorsForFilters);
-                    
-                    return window._allSectorsForFilters;
-                }
-            } catch(err) {
-                console.error(' Erro ao carregar setores:', err);
-            }
-            
-            return [];
-        }
-
-        async function ensureSectorsLoadedSelect() {
-            const select = document.getElementById('filterDepartment');
-            if (!select) return;
-            
-            if (select.options.length > 1) return;
-            
-            const sectors = await ensureSectorsLoaded();
-            
-            sectors.forEach(s => {
-                const opt = document.createElement('option');
-                opt.value = s.name || '';
-                opt.textContent = s.name || '';
-                select.appendChild(opt);
-            });
-        }
-
-        async function ensureResponsiblesLoaded() {
-            if (window._allResponsiblesForFilters && window._allResponsiblesForFilters.length > 0) {
-                console.log(' Responsáveis já carregados:', window._allResponsiblesForFilters.length);
-                return window._allResponsiblesForFilters;
-            }
-            
-            try {
-                console.log(' Buscando responsáveis das RNCs...');
-                const response = await fetch('/api/rnc/list?tab=finalized&limit=5000');
-                const data = await response.json();
-                
-                console.log(' Resposta recebida para responsáveis:', data);
-                
-                if (data && Array.isArray(data.rncs)) {
-                    const responsiblesMap = new Map();
-                    
-                    data.rncs.forEach((rnc, index) => {
-                        if (index === 0) {
-                            console.log(' Amostra da primeira RNC (responsáveis):', rnc);
-                            console.log(' Campos disponíveis na RNC:', Object.keys(rnc));
-                        }
-                        
-                        const responsibleName = rnc.user_name || rnc.responsible || rnc.responsavel || rnc.assigned_user_name || rnc.responsible_user;
-                        const sectorName = rnc.setor || rnc.department || rnc.sector || rnc.user_department;
-                        
-                        console.log(` RNC ${index + 1}: responsibleName="${responsibleName}", sectorName="${sectorName}"`);
-                        
-                        if (responsibleName && responsibleName.trim() !== '') {
-                            const key = responsibleName.trim();
-                            if (!responsiblesMap.has(key)) {
-                                responsiblesMap.set(key, {
-                                    name: key,
-                                    setor: sectorName ? sectorName.trim() : null
-                                });
-                                console.log(` Adicionado responsável: ${key} (setor: ${sectorName || 'N/A'})`);
-                            }
-                        } else {
-                            console.log(` RNC ${index + 1} sem responsável válido`);
-                        }
-                    });
-                    
-                    window._allResponsiblesForFilters = Array.from(responsiblesMap.values()).sort((a, b) => 
-                        a.name.localeCompare(b.name)
-                    );
-                    
-                    console.log(' Responsáveis únicos encontrados:', window._allResponsiblesForFilters.length);
-                    console.log(' Lista de responsáveis:', window._allResponsiblesForFilters);
-                    
-                    // Se não encontrou responsáveis nas RNCs, tentar API de usuários
-                    if (window._allResponsiblesForFilters.length === 0) {
-                        console.log(' Tentando buscar usuários da API...');
-                        try {
-                            const usersResponse = await fetch('/api/users');
-                            const usersData = await usersResponse.json();
-                            
-                            if (usersData && Array.isArray(usersData.users)) {
-                                window._allResponsiblesForFilters = usersData.users.map(user => ({
-                                    name: user.name || user.username || user.email,
-                                    setor: user.department || user.setor || null
-                                }));
-                                console.log(' Usuários carregados da API:', window._allResponsiblesForFilters.length);
-                            }
-                        } catch(usersErr) {
-                            console.warn(' Erro ao carregar usuários da API:', usersErr);
-                        }
-                    }
-                    
-                    return window._allResponsiblesForFilters;
-                }
-            } catch(err) {
-                console.error(' Erro ao carregar responsáveis:', err);
-            }
-            
-            return [];
-        }
-
-        async function ensureResponsiblesLoadedSelect() {
-            const select = document.getElementById('filterResponsible');
-            if (!select) return;
-            
-            const sectorSelect = document.getElementById('filterDepartment');
-            const selectedSector = sectorSelect ? sectorSelect.value : '';
-            
-            const responsibles = await ensureResponsiblesLoaded();
-            
-            // Limpar opções antigas (exceto a primeira)
-            while (select.options.length > 1) {
-                select.remove(1);
-            }
-            
-            // Filtrar responsáveis por setor se um setor estiver selecionado
-            let filteredResponsibles = responsibles;
-            if (selectedSector && selectedSector !== '') {
-                filteredResponsibles = responsibles.filter(r => r.setor === selectedSector);
-                console.log(` Filtrando responsáveis do setor "${selectedSector}":`, filteredResponsibles.length);
-            }
-            
-            filteredResponsibles.forEach(r => {
-                const opt = document.createElement('option');
-                opt.value = r.name || '';
-                const displayText = r.setor ? `${r.name} (${r.setor})` : r.name;
-                opt.textContent = displayText;
-                select.appendChild(opt);
-            });
-            
-            if (filteredResponsibles.length === 0 && selectedSector) {
-                const opt = document.createElement('option');
-                opt.value = '';
-                opt.textContent = 'Nenhum responsável neste setor';
-                opt.disabled = true;
-                select.appendChild(opt);
-            }
-        }
-
-        function updateResponsiblesBySelectedSector() {
-            const sectorSelect = document.getElementById('filterDepartment');
-            const responsibleSelect = document.getElementById('filterResponsible');
-            
-            if (!sectorSelect || !responsibleSelect) return;
-            
-            ensureResponsiblesLoadedSelect();
-        }
-
-        // Função de teste para debug
-        async function testResponsiblesLoad() {
-            console.log(' TESTE: Iniciando carregamento de responsáveis...');
-            const responsibles = await ensureResponsiblesLoaded();
-            console.log(' TESTE: Responsáveis carregados:', responsibles);
-            
-            const select = document.getElementById('filterResponsible');
-            if (select) {
-                console.log(' TESTE: Select encontrado, populando...');
-                ensureResponsiblesLoadedSelect();
-            } else {
-                console.log(' TESTE: Select não encontrado!');
-            }
-        }
-
-        // Expor função globalmente para teste
-        window.testResponsiblesLoad = testResponsiblesLoad;
-    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -1715,9 +1365,9 @@
                         <span class="count" id="count-active">0</span>
                     </button>
                     {% if user_permissions.canViewEngineeringRncs %}
-                    <button class="tab-button" data-tab="setores" onclick="switchTab('setores')">
-                        RNCs Mensais por Setor
-                    </button>
+                   <!-- <button class="tab-button" data-tab="setores" onclick="switchTab('setores')">
+                        Gráficos
+                    </button> -->
                     {% endif %}
                     {% if user_permissions.canViewFinalizedRncs %}
                     <button class="tab-button" data-tab="finalized" onclick="switchTab('finalized')">
@@ -1732,9 +1382,9 @@
                     </button>
                     {% endif %}
                     {% if user_permissions.canViewLevantamento1415 %}
-                   <!-- <button class="tab-button" data-tab="lev1415" onclick="switchTab('lev1415')">
+                  <button class="tab-button" data-tab="lev1415" onclick="switchTab('lev1415')">
                         Levantamento 14-15
-                    </button> -->
+                    </button> 
                     {% endif %}
                 </div>
                 
@@ -2279,6 +1929,95 @@
                     </div>
                     <div style="background: #f8f9fa; border-radius: 8px; padding: 20px;">
                         <canvas id="setorSingleChart" style="max-height: 400px;"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Nova seção: Gráfico de RNCs por Quinzena -->
+                <div style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+                    <h3 style="margin-bottom: 20px; color: #333;"> RNCs por Quinzena</h3>
+                    <div style="display:flex; gap:12px; align-items:center; margin-bottom:12px;">
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <label style="font-size:13px; color:#495057; margin-right:6px;">Ano:</label>
+                            <select id="biweeklyYearSelect" onchange="loadBiweeklyChart()" style="padding:6px 8px; border:1px solid #ddd; border-radius:6px; min-width:120px;">
+                                <option value="">Selecione o ano</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <label style="font-size:13px; color:#495057; margin-right:6px;">Mês:</label>
+                            <select id="biweeklyMonthSelect" onchange="loadBiweeklyChart()" style="padding:6px 8px; border:1px solid #ddd; border-radius:6px; min-width:160px;">
+                                <option value="">Selecione o mês</option>
+                                <option value="01">Janeiro</option>
+                                <option value="02">Fevereiro</option>
+                                <option value="03">Março</option>
+                                <option value="04">Abril</option>
+                                <option value="05">Maio</option>
+                                <option value="06">Junho</option>
+                                <option value="07">Julho</option>
+                                <option value="08">Agosto</option>
+                                <option value="09">Setembro</option>
+                                <option value="10">Outubro</option>
+                                <option value="11">Novembro</option>
+                                <option value="12">Dezembro</option>
+                            </select>
+                        </div>
+                        <div>
+                            <button onclick="loadBiweeklyChart()" style="padding:8px 12px; border:none; border-radius:6px; background:#dc3545; color:#fff; font-weight:600; cursor:pointer;">Gerar Gráfico</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Indicadores rápidos -->
+                    <div id="biweeklyIndicators" style="display:none; margin-bottom:15px;">
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:10px;">
+                            <div style="background:#e3f2fd; border-radius:8px; padding:12px; text-align:center;">
+                                <div id="biweeklyTotal" style="font-size:20px; font-weight:bold; color:#1976d2;">0</div>
+                                <div style="font-size:11px; color:#1565c0;">Total no Mês</div>
+                            </div>
+                            <div style="background:#f3e5f5; border-radius:8px; padding:12px; text-align:center;">
+                                <div id="biweeklyFirst" style="font-size:20px; font-weight:bold; color:#7b1fa2;">0</div>
+                                <div style="font-size:11px; color:#6a1b9a;">1ª Quinzena</div>
+                            </div>
+                            <div style="background:#e8f5e8; border-radius:8px; padding:12px; text-align:center;">
+                                <div id="biweeklySecond" style="font-size:20px; font-weight:bold; color:#388e3c;">0</div>
+                                <div style="font-size:11px; color:#2e7d32;">2ª Quinzena</div>
+                            </div>
+                            <div style="background:#fff3e0; border-radius:8px; padding:12px; text-align:center;">
+                                <div id="biweeklyAverage" style="font-size:20px; font-weight:bold; color:#f57c00;">0</div>
+                                <div style="font-size:11px; color:#ef6c00;">Média/Dia</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; border-radius: 8px; padding: 20px; min-height: 400px; position: relative;">
+                        <div id="biweeklyChartLoading" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #666;">
+                            <div style="font-size: 18px; margin-bottom: 10px;">📊</div>
+                            <div>Selecione o ano e mês para visualizar o gráfico</div>
+                        </div>
+                        <canvas id="biweeklyChart" style="max-height: 400px; display: none;"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Gráfico de Setores por Quinzena -->
+                <div style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+                    <h3 style="margin-bottom: 20px; color: #333;">📈 RNCs por Setor e Quinzena</h3>
+                    <p style="margin-bottom: 15px; color: #666; font-size: 14px;">Comparação de RNCs entre setores divididas por quinzenas do mês</p>
+                    
+                    <div style="background: #f8f9fa; border-radius: 8px; padding: 20px; min-height: 400px;">
+                        <canvas id="sectorsBiweeklyChart" style="max-height: 400px;"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Gráfico de Funcionários por Setor -->
+                <div style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+                    <h3 style="margin-bottom: 20px; color: #333;">👥 Top Funcionários por Setor</h3>
+                    <p style="margin-bottom: 15px; color: #666; font-size: 14px;">Ranking dos funcionários com mais RNCs em cada setor</p>
+                    
+                    <!-- Cards de setores com funcionários -->
+                    <div id="sectorsEmployeesContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                        <!-- Será preenchido dinamicamente -->
+                    </div>
+                    
+                    <div style="background: #f8f9fa; border-radius: 8px; padding: 20px; min-height: 300px;">
+                        <canvas id="employeesBySectorChart" style="max-height: 300px;"></canvas>
                     </div>
                 </div>
             </div>
@@ -5693,6 +5432,34 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                 // Popular selects de filtros prontamente
                 try { ensureSetorFiltersPopulated(); } catch(e) { console.warn('ensureSetorFiltersPopulated falhou', e); }
 
+                // Inicializar gráfico de quinzenas
+                setTimeout(() => {
+                    if (typeof initializeBiweeklySelectors === 'function') {
+                        initializeBiweeklySelectors();
+                        console.log(' Gráfico de quinzenas inicializado');
+                        
+                        // Carregar dados automaticamente com a data atual
+                        const currentYear = new Date().getFullYear();
+                        const currentMonth = new Date().getMonth() + 1;
+                        
+                        const yearSelect = document.getElementById('biweeklyYearSelect');
+                        const monthSelect = document.getElementById('biweeklyMonthSelect');
+                        
+                        if (yearSelect && monthSelect) {
+                            yearSelect.value = currentYear;
+                            monthSelect.value = currentMonth;
+                            
+                            // Carregar todos os gráficos automaticamente
+                            if (typeof loadBiweeklyChart === 'function') {
+                                loadBiweeklyChart();
+                                console.log(' Gráficos de quinzenas, setores e funcionários carregados automaticamente');
+                            }
+                        }
+                    } else {
+                        console.error(' Função initializeBiweeklySelectors não encontrada');
+                    }
+                }, 100);
+
                 // Dar um pequeno atraso para o DOM e select atualizarem
                 setTimeout(() => {
                     if (typeof loadSetorData === 'function') {
@@ -7999,6 +7766,486 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
                     }
                 }
             });
+        }
+
+        // ===== FUNÇÕES PARA GRÁFICO DE QUINZENAS =====
+        
+        let biweeklyChart = null;
+        let sectorsBiweeklyChart = null;
+        let employeesBySectorChart = null;
+        
+        function initializeBiweeklySelectors() {
+            const yearSelect = document.getElementById('biweeklyYearSelect');
+            const monthSelect = document.getElementById('biweeklyMonthSelect');
+            
+            if (!yearSelect || !monthSelect) {
+                console.error('Elementos de seleção de quinzenas não encontrados');
+                return;
+            }
+            
+            const currentYear = new Date().getFullYear();
+            const currentMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+            
+            // Limpar e popular anos (últimos 5 anos)
+            yearSelect.innerHTML = '<option value="">Selecione o ano</option>';
+            for (let year = currentYear; year >= currentYear - 4; year--) {
+                const option = document.createElement('option');
+                option.value = year;
+                option.textContent = year;
+                if (year === currentYear) option.selected = true;
+                yearSelect.appendChild(option);
+            }
+            
+            // Definir mês atual como padrão
+            monthSelect.value = currentMonth;
+            
+            console.log('Seletores de quinzenas inicializados', { ano: currentYear, mes: currentMonth });
+            
+            // Carregar gráfico automaticamente
+            setTimeout(() => {
+                loadBiweeklyChart();
+            }, 500);
+        }
+        
+        async function loadBiweeklyChart() {
+            const yearSelect = document.getElementById('biweeklyYearSelect');
+            const monthSelect = document.getElementById('biweeklyMonthSelect');
+            const year = yearSelect.value;
+            const month = monthSelect.value;
+            
+            if (!year || !month) {
+                alert('Por favor, selecione o ano e o mês.');
+                return;
+            }
+            
+            try {
+                console.log(`Carregando gráficos para ${month}/${year}...`);
+                
+                // Carregar dados principais de quinzenas
+                const biweeklyResponse = await fetch(`/api/charts/biweekly-data?year=${year}&month=${month}`, { credentials: 'include' });
+                const biweeklyData = await biweeklyResponse.json();
+                
+                if (biweeklyData.error) {
+                    console.error('Erro na API biweekly:', biweeklyData.error);
+                    alert('Erro ao carregar dados principais: ' + biweeklyData.error);
+                    return;
+                }
+                
+                // Carregar dados de setores por quinzena
+                const sectorsResponse = await fetch(`/api/charts/sectors-biweekly?year=${year}&month=${month}`, { credentials: 'include' });
+                const sectorsData = await sectorsResponse.json();
+                
+                // Carregar dados de funcionários por setor
+                const employeesResponse = await fetch(`/api/charts/employees-by-sector?year=${year}&month=${month}`, { credentials: 'include' });
+                const employeesData = await employeesResponse.json();
+                
+                console.log('Dados carregados:', { biweeklyData, sectorsData, employeesData });
+                
+                // Atualizar indicadores
+                updateBiweeklyIndicators(biweeklyData);
+                
+                // Criar todos os gráficos
+                createBiweeklyChart(biweeklyData);
+                
+                if (!sectorsData.error) {
+                    createSectorsBiweeklyChart(sectorsData);
+                }
+                
+                if (!employeesData.error) {
+                    createEmployeesBySectorChart(employeesData);
+                    createSectorsEmployeesCards(employeesData);
+                }
+                
+            } catch (error) {
+                console.error('Erro ao carregar gráficos:', error);
+                alert('Erro ao carregar gráficos: ' + error.message);
+            }
+        }
+        
+        function updateBiweeklyIndicators(data) {
+            const indicators = document.getElementById('biweeklyIndicators');
+            const totalEl = document.getElementById('biweeklyTotal');
+            const firstEl = document.getElementById('biweeklyFirst');
+            const secondEl = document.getElementById('biweeklySecond');
+            const averageEl = document.getElementById('biweeklyAverage');
+            
+            if (data.total > 0) {
+                indicators.style.display = 'block';
+                totalEl.textContent = data.total;
+                firstEl.textContent = data.quinzenas[0].count;
+                secondEl.textContent = data.quinzenas[1].count;
+                
+                // Calcular média diária do mês
+                const totalDays = new Date(parseInt(data.period.split('/')[1]), parseInt(data.period.split('/')[0]), 0).getDate();
+                const average = (data.total / totalDays).toFixed(1);
+                averageEl.textContent = average;
+            } else {
+                indicators.style.display = 'none';
+            }
+        }
+        
+        function createBiweeklyChart(data) {
+            const canvas = document.getElementById('biweeklyChart');
+            const loading = document.getElementById('biweeklyChartLoading');
+            
+            if (!canvas) {
+                console.error('Canvas biweeklyChart não encontrado!');
+                return;
+            }
+            
+            // Mostrar canvas e esconder loading
+            canvas.style.display = 'block';
+            if (loading) loading.style.display = 'none';
+            
+            const ctx = canvas.getContext('2d');
+            
+            // Destruir gráfico anterior se existir
+            if (biweeklyChart) {
+                biweeklyChart.destroy();
+            }
+            
+            const chartData = {
+                labels: data.quinzenas.map(q => q.label),
+                datasets: [{
+                    label: 'RNCs por Quinzena',
+                    data: data.quinzenas.map(q => q.count),
+                    backgroundColor: [
+                        'rgba(156, 39, 176, 0.8)',  // Roxo para 1ª quinzena
+                        'rgba(76, 175, 80, 0.8)'    // Verde para 2ª quinzena
+                    ],
+                    borderColor: [
+                        'rgba(156, 39, 176, 1)',
+                        'rgba(76, 175, 80, 1)'
+                    ],
+                    borderWidth: 2,
+                    borderRadius: 8,
+                    borderSkipped: false
+                }]
+            };
+            
+            const options = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: `RNCs por Quinzena - ${data.period}`,
+                        font: {
+                            size: 16,
+                            weight: 'bold'
+                        },
+                        color: '#333'
+                    },
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const quinzena = data.quinzenas[context.dataIndex];
+                                return [
+                                    `Dias com RNCs: ${quinzena.days}`,
+                                    `Média/dia: ${quinzena.average.toFixed(2)}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        },
+                        ticks: {
+                            stepSize: 1,
+                            font: {
+                                size: 12
+                            },
+                            color: '#666'
+                        },
+                        title: {
+                            display: true,
+                            text: 'Quantidade de RNCs',
+                            font: {
+                                size: 14,
+                                weight: 'bold'
+                            },
+                            color: '#333'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            font: {
+                                size: 12,
+                                weight: 'bold'
+                            },
+                            color: '#333'
+                        }
+                    }
+                },
+                animation: {
+                    duration: 1000,
+                    easing: 'easeInOutQuart'
+                }
+            };
+            
+            try {
+                biweeklyChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: chartData,
+                    options: options
+                });
+                
+                console.log('Gráfico de quinzenas criado com sucesso');
+            } catch (error) {
+                console.error('Erro ao criar gráfico de quinzenas:', error);
+                // Mostrar mensagem de erro no canvas
+                ctx.fillStyle = '#dc3545';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Erro ao carregar gráfico', canvas.width / 2, canvas.height / 2);
+            }
+        }
+
+        // Função para criar gráfico de setores por quinzena
+        function createSectorsBiweeklyChart(data) {
+            const ctx = document.getElementById('sectorsBiweeklyChart');
+            if (!ctx) {
+                console.error('Canvas sectorsBiweeklyChart não encontrado');
+                return;
+            }
+            
+            // Destruir gráfico anterior se existir
+            if (sectorsBiweeklyChart) {
+                sectorsBiweeklyChart.destroy();
+            }
+            
+            if (!data.sectors || data.sectors.length === 0) {
+                console.log('Nenhum dado de setores disponível');
+                ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+                return;
+            }
+            
+            // Preparar dados para o gráfico
+            const sectors = data.sectors;
+            const datasets = [];
+            const colors = [
+                'rgba(255, 99, 132, 0.8)',
+                'rgba(54, 162, 235, 0.8)',
+                'rgba(255, 205, 86, 0.8)',
+                'rgba(75, 192, 192, 0.8)',
+                'rgba(153, 102, 255, 0.8)',
+                'rgba(255, 159, 64, 0.8)',
+                'rgba(199, 199, 199, 0.8)',
+                'rgba(83, 102, 255, 0.8)'
+            ];
+            
+            sectors.forEach((s, index) => {
+                const name = s.name || s.setor || s.sector || 'Não informado';
+                const q1 = Number(s.quinzena_1 ?? s.first_quinzena ?? s.primeira_quinzena ?? s.first ?? 0);
+                const q2 = Number(s.quinzena_2 ?? s.second_quinzena ?? s.segunda_quinzena ?? s.second ?? 0);
+                datasets.push({
+                    label: name,
+                    data: [q1, q2],
+                    backgroundColor: colors[index % colors.length],
+                    borderColor: colors[index % colors.length].replace('0.8', '1'),
+                    borderWidth: 2
+                });
+            });
+            
+            const config = {
+                type: 'bar',
+                data: {
+                    labels: ['1ª Quinzena', '2ª Quinzena'],
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'RNCs por Setor - Comparação de Quinzenas'
+                        },
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Quinzenas'
+                            }
+                        },
+                        y: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Número de RNCs'
+                            },
+                            beginAtZero: true
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            };
+            
+            sectorsBiweeklyChart = new Chart(ctx, config);
+            console.log('Gráfico de setores por quinzena criado com sucesso');
+        }
+
+        // Função para criar gráfico de funcionários por setor
+        function createEmployeesBySectorChart(data) {
+            const ctx = document.getElementById('employeesBySectorChart');
+            if (!ctx) {
+                console.error('Canvas employeesBySectorChart não encontrado');
+                return;
+            }
+            
+            // Destruir gráfico anterior se existir
+            if (employeesBySectorChart) {
+                employeesBySectorChart.destroy();
+            }
+            
+            if (!data.sectors || data.sectors.length === 0) {
+                console.log('Nenhum dado de funcionários por setor disponível');
+                ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+                return;
+            }
+            
+            // Preparar dados para o gráfico
+            const sectors = data.sectors;
+            const sectorNames = sectors.map(s => s.name || s.setor || s.sector || 'Não informado');
+            const rncCounts = sectors.map(s => {
+                if (typeof s.total_rncs !== 'undefined') return Number(s.total_rncs);
+                if (typeof s.total !== 'undefined') return Number(s.total);
+                if (Array.isArray(s.employees)) return s.employees.reduce((acc, e) => acc + Number(e.count ?? e.total_rncs ?? 0), 0);
+                return 0;
+            });
+            
+            const colors = [
+                'rgba(255, 99, 132, 0.8)',
+                'rgba(54, 162, 235, 0.8)',
+                'rgba(255, 205, 86, 0.8)',
+                'rgba(75, 192, 192, 0.8)',
+                'rgba(153, 102, 255, 0.8)',
+                'rgba(255, 159, 64, 0.8)',
+                'rgba(199, 199, 199, 0.8)',
+                'rgba(83, 102, 255, 0.8)'
+            ];
+            
+            const config = {
+                type: 'pie',
+                data: {
+                    labels: sectorNames,
+                    datasets: [{
+                        data: rncCounts,
+                        backgroundColor: colors,
+                        borderColor: colors.map(c => c.replace('0.8', '1')),
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Distribuição de RNCs por Setor'
+                        },
+                        legend: {
+                            display: true,
+                            position: 'right'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.label || '';
+                                    const value = context.parsed || 0;
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = ((value / total) * 100).toFixed(1);
+                                    return `${label}: ${value} RNCs (${percentage}%)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+            
+            employeesBySectorChart = new Chart(ctx, config);
+            console.log('Gráfico de funcionários por setor criado com sucesso');
+        }
+
+        // Função para criar cards de funcionários por setor
+        function createSectorsEmployeesCards(data) {
+            const container = document.getElementById('sectorsEmployeesCards');
+            if (!container) {
+                console.error('Container sectorsEmployeesCards não encontrado');
+                return;
+            }
+            
+            if (!data.sectors || data.sectors.length === 0) {
+                container.innerHTML = '<p>Nenhum dado de funcionários disponível.</p>';
+                return;
+            }
+            
+            let html = '<div class="row">';
+            
+            data.sectors.forEach((sector, index) => {
+                html += `
+                    <div class="col-md-6 col-lg-4 mb-3">
+                        <div class="card">
+                            <div class="card-header bg-primary text-white">
+                                <h6 class="mb-0">${sector.name || sector.setor || sector.sector || 'Não informado'}</h6>
+                            </div>
+                            <div class="card-body">
+                                <p class="mb-2"><strong>Total de RNCs:</strong> ${typeof sector.total_rncs !== 'undefined' ? sector.total_rncs : (typeof sector.total !== 'undefined' ? sector.total : (sector.employees ? sector.employees.reduce((a,e)=>a + Number(e.count ?? e.total_rncs ?? 0),0) : 0))}</p>
+                                <p class="mb-2"><strong>Funcionários com RNCs:</strong> ${sector.employees ? sector.employees.length : 0}</p>
+                                <hr>
+                                <h6>Top 3 Funcionários:</h6>
+                                <ul class="list-unstyled">
+                `;
+                
+                if (sector.employees && sector.employees.length > 0) {
+                    sector.employees.slice(0, 3).forEach((emp, empIndex) => {
+                        const badgeClass = empIndex === 0 ? 'badge-danger' : empIndex === 1 ? 'badge-warning' : 'badge-info';
+                        html += `
+                            <li class="mb-1">
+                                <span class="badge ${badgeClass}">${empIndex + 1}º</span>
+                                ${emp.name || emp.nome || 'Nome não informado'} 
+                                <small class="text-muted">(${Number(emp.count ?? emp.total_rncs ?? 0)} RNCs)</small>
+                            </li>
+                        `;
+                    });
+                } else {
+                    html += '<li class="text-muted">Nenhum funcionário encontrado</li>';
+                }
+                
+                html += `
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+            
+            console.log('Cards de funcionários por setor criados com sucesso');
         }
 
         function toggleChartType(chartId) {
@@ -17139,6 +17386,11 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
             try {
                 buildSetorSingleChart(labels, values);
                 console.log(' setorSingleChart criado com sucesso');
+                
+                // Inicializar gráfico de quinzenas
+                initializeBiweeklySelectors();
+                console.log(' Seletores de quinzenas inicializados');
+                
                 return window.setorSingleChart;
             } catch(e) {
                 console.error('Erro ao inicializar Chart:', e);
@@ -17345,6 +17597,344 @@ Status: ${data.debug_info.inspection2_empty ? ' VAZIO' : ' PREENCHIDO'}`);
             }
         }
     </style>
+        <script>
+    // ====== SUPORTE A GRÁFICOS DE SETORES E QUINZENAS (DINÂMICO) ======
+    (function(){
+        const BASE = window.location.origin || '';
+        let _setorAutoRefresh = null;
+        let _setorSingleChart = null;
+        let _biweeklyChart = null;
+        let _sectorsBiweeklyChart = null;
+        let _employeesBySectorChart = null;
 
+        // Util: destruir gráfico com segurança
+        function destroyChart(ref){ try { if(ref && typeof ref.destroy==='function') ref.destroy(); } catch(_){} }
+
+        // Popula selects Ano/Status da seção Setores
+        window.ensureSetorFiltersPopulated = function ensureSetorFiltersPopulated() {
+            const yearSel = document.getElementById('filterYear');
+            const statusSel = document.getElementById('filterStatus');
+            const yearNow = new Date().getFullYear();
+            if (yearSel && yearSel.options.length <= 1) {
+                yearSel.innerHTML = '';
+                for (let y = yearNow; y >= yearNow - 7; y--) {
+                    const opt = document.createElement('option');
+                    opt.value = String(y);
+                    opt.textContent = String(y);
+                    yearSel.appendChild(opt);
+                }
+            }
+            if (statusSel && statusSel.options.length <= 1) {
+                statusSel.innerHTML = '';
+                const opts = [
+                    {v:'', t:'Todos'},
+                    {v:'active', t:'Ativos'},
+                    {v:'finalized', t:'Finalizados'}
+                ];
+                opts.forEach(o=>{ const opt=document.createElement('option'); opt.value=o.v; opt.textContent=o.t; statusSel.appendChild(opt); });
+            }
+        };
+
+        // Constrói o gráfico simples por setor (últimos meses)
+        window.buildSetorSingleChart = function buildSetorSingleChart(labels=[], values=[]) {
+            const canvas = document.getElementById('setorSingleChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            destroyChart(_setorSingleChart);
+            _setorSingleChart = new Chart(ctx, {
+                type: 'bar',
+                data: { labels, datasets: [{
+                    label: 'RNCs',
+                    data: values,
+                    backgroundColor: 'rgba(220,53,69,0.7)',
+                    borderColor: '#dc3545',
+                    borderWidth: 1
+                }]},
+                options: { responsive:true, maintainAspectRatio:false, scales: { y: { beginAtZero:true } } }
+            });
+        };
+
+        // Carrega dados do gráfico simples (fallback leve)
+        window.loadDefaultSectorChart = async function loadDefaultSectorChart(){
+            try {
+                const labels = ['Jan','Fev','Mar','Abr','Mai','Jun'];
+                const values = [0,0,0,0,0,0];
+                buildSetorSingleChart(labels, values);
+            } catch(e) { console.warn('loadDefaultSectorChart falhou', e); }
+        };
+
+        // Aplicar filtros do card superior de Setores (usa endpoint de indicadores se disponível)
+        window.applySetorFilters = async function applySetorFilters(){
+            const year = (document.getElementById('filterYear')||{}).value || new Date().getFullYear();
+            const status = (document.getElementById('filterStatus')||{}).value || '';
+            try {
+                const url = `${BASE}/api/indicadores/setor?year=${encodeURIComponent(year)}${status?`&status=${encodeURIComponent(status)}`:''}`;
+                const resp = await fetch(url, { credentials:'include' });
+                if (!resp.ok) throw new Error('HTTP '+resp.status);
+                const data = await resp.json();
+                // Tentar extrair séries mensais genéricas
+                const labels = (data.labels || data.meses || data.months || ['Jan','Fev','Mar','Abr','Mai','Jun']).slice(0,12);
+                const values = (data.values || data.totais || data.counts || []).slice(0, labels.length);
+                buildSetorSingleChart(labels, values);
+            } catch(e) {
+                console.warn('applySetorFilters fallback para default', e);
+                loadDefaultSectorChart();
+            }
+        };
+
+        // Inicializa selects de bi-semanal
+        window.initializeBiweeklySelectors = function initializeBiweeklySelectors(){
+            const yearSel = document.getElementById('biweeklyYearSelect');
+            if (yearSel && yearSel.options.length <= 1) {
+                const yNow = new Date().getFullYear();
+                yearSel.innerHTML = '<option value="">Selecione o ano</option>';
+                for (let y = yNow; y >= yNow - 7; y--) {
+                    const opt = document.createElement('option');
+                    opt.value = String(y);
+                    opt.textContent = String(y);
+                    yearSel.appendChild(opt);
+                }
+            }
+        };
+
+        // Cria gráfico de quinzenas (1ª vs 2ª)
+        function createBiweeklyChart(stats){
+            const canvas = document.getElementById('biweeklyChart');
+            const loading = document.getElementById('biweeklyChartLoading');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            destroyChart(_biweeklyChart);
+            const q1 = Number(stats.quinzena_1 ?? stats.first_quinzena ?? stats.first ?? 0);
+            const q2 = Number(stats.quinzena_2 ?? stats.second_quinzena ?? stats.second ?? 0);
+            _biweeklyChart = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: ['1ª Quinzena','2ª Quinzena'], datasets: [{
+                    label: 'RNCs', data: [q1, q2], backgroundColor:['#7b1fa2','#388e3c']
+                }]},
+                options: { responsive:true, maintainAspectRatio:false, scales: { y:{ beginAtZero:true } } }
+            });
+            if (loading) loading.style.display = 'none';
+            canvas.style.display = 'block';
+        }
+
+        // Gráfico agrupado por setor e quinzena
+        function createSectorsBiweeklyChart(items){
+            const canvas = document.getElementById('sectorsBiweeklyChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            destroyChart(_sectorsBiweeklyChart);
+            const labels = items.map(s=>s.name||s.setor||s.sector||'—');
+            const q1 = items.map(s=>Number(s.quinzena_1 ?? s.first ?? 0));
+            const q2 = items.map(s=>Number(s.quinzena_2 ?? s.second ?? 0));
+            _sectorsBiweeklyChart = new Chart(ctx, {
+                type:'bar',
+                data:{
+                    labels,
+                    datasets:[
+                        { label:'1ª Quinzena', data:q1, backgroundColor:'rgba(123,31,162,0.7)' },
+                        { label:'2ª Quinzena', data:q2, backgroundColor:'rgba(56,142,60,0.7)' }
+                    ]
+                },
+                options:{ responsive:true, maintainAspectRatio:false, scales:{ y:{ beginAtZero:true } } }
+            });
+        }
+
+        // Gráfico pizza por setor (totais) + cards de top funcionários
+        function createEmployeesBySectorChart(sectorTotals, sectorsDetail){
+            const canvas = document.getElementById('employeesBySectorChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            destroyChart(_employeesBySectorChart);
+            const labels = sectorTotals.map(x=>x.name||x.setor||x.sector||'—');
+            const data = sectorTotals.map(x=>Number(x.total||x.count||0));
+            _employeesBySectorChart = new Chart(ctx, {
+                type:'doughnut',
+                data:{ labels, datasets:[{ data, backgroundColor: labels.map((_,i)=>`hsl(${(i*47)%360} 70% 55%)`) }] },
+                options:{ responsive:true, maintainAspectRatio:false }
+            });
+            createSectorsEmployeesCards(sectorsDetail);
+        }
+
+        function createSectorsEmployeesCards(sectorsDetail){
+            const container = document.getElementById('sectorsEmployeesContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            if (!Array.isArray(sectorsDetail) || sectorsDetail.length===0) {
+                container.innerHTML = '<div style="color:#666;">Sem dados de funcionários por setor.</div>';
+                return;
+            }
+            sectorsDetail.forEach(sec => {
+                const sectorName = sec.name || sec.setor || sec.sector || 'Setor';
+                const emps = Array.isArray(sec.employees) ? sec.employees.slice(0,5) : [];
+                const total = Number(sec.total || 0);
+                const card = document.createElement('div');
+                card.style.cssText = 'background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;';
+                const list = emps.map(e=>`<div style="display:flex;justify-content:space-between;padding:4px 0;"><span>${e.name||e.employee||'—'}</span><b>${e.count||0}</b></div>`).join('');
+                card.innerHTML = `<div style="font-weight:700;margin-bottom:6px;">${sectorName} <span style="color:#6c757d;font-weight:500">(Total: ${total})</span></div>${list || '<div style="color:#777;">Sem funcionários</div>'}`;
+                container.appendChild(card);
+            });
+        }
+
+        // Helpers para carregar RNCs e Grupos e montar gráficos a partir de ASSINATURAS CABEÇALHO
+        async function fetchAllRncsFinalized(){
+            try {
+                const resp = await fetch('/api/rnc/list?tab=finalized&limit=50000', { credentials:'include' });
+                const data = await resp.json();
+                return Array.isArray(data.rncs) ? data.rncs : [];
+            } catch(e){ console.warn('Falha ao carregar /api/rnc/list (finalized)', e); return []; }
+        }
+
+        async function fetchGroupsMap(){
+            try {
+                const resp = await fetch('/api/groups', { credentials:'include' });
+                const data = await resp.json();
+                const groups = data.groups || [];
+                const map = {};
+                groups.forEach(g=>{ map[String(g.id)] = g.name; });
+                return map;
+            } catch(e){ console.warn('Falha ao carregar /api/groups', e); return {}; }
+        }
+
+        function normalizeSetorName(raw, groupsMap){
+            if (raw == null) return 'Não informado';
+            const s = String(raw).trim();
+            if (!s) return 'Não informado';
+            if (/^\d+$/.test(s) && groupsMap[s]) return groupsMap[s];
+            return s;
+        }
+
+        function parseDateSafe(s){
+            if (!s) return null;
+            // Handle formats like 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DDTHH:MM:SS'
+            if (/^\d{4}-\d{2}-\d{2} /.test(s)) s = s.replace(' ', 'T');
+            const d = new Date(s);
+            if (!isNaN(d.getTime())) return d;
+            // Fallback: try split YYYY-MM-DD
+            const m = /^\s*(\d{4})-(\d{2})-(\d{2})/.exec(s);
+            if (m) return new Date(Number(m[1]), Number(m[2])-1, Number(m[3]));
+            return null;
+        }
+
+        function buildSectorsBiweeklyFromRncs(rncs, year, month, groupsMap){
+            const itemsMap = new Map();
+            rncs.forEach(r => {
+                const created = r.created_at || r.finalized_at || null;
+                const d = parseDateSafe(created);
+                if (String(d.getFullYear()) !== String(year)) return;
+                if (String(d.getMonth()+1) !== String(month)) return;
+                const day = d.getDate();
+                const quin = (day <= 15) ? 'q1' : 'q2';
+                const setorName = normalizeSetorName(r.setor_responsavel, groupsMap);
+                const rec = itemsMap.get(setorName) || { name: setorName, quinzena_1:0, quinzena_2:0 };
+                if (quin==='q1') rec.quinzena_1++; else rec.quinzena_2++;
+                itemsMap.set(setorName, rec);
+            });
+            return Array.from(itemsMap.values()).sort((a,b)=> (b.quinzena_1+b.quinzena_2) - (a.quinzena_1+a.quinzena_2));
+        }
+
+        function buildEmployeesBySectorFromRncs(rncs, groupsMap){
+            // Totais por setor e top funcionários (por causador_nome)
+            const sectorMap = new Map();
+            rncs.forEach(r => {
+                const setor = normalizeSetorName(r.setor_responsavel, groupsMap);
+                const emp = (r.causador_nome && String(r.causador_nome).trim()) ? r.causador_nome : (r.assigned_user_name || r.user_name || 'Não informado');
+                const sec = sectorMap.get(setor) || { name: setor, total:0, employees:{} };
+                sec.total++;
+                sec.employees[emp] = (sec.employees[emp]||0)+1;
+                sectorMap.set(setor, sec);
+            });
+            const details = Array.from(sectorMap.values()).map(sec => ({
+                name: sec.name,
+                total: sec.total,
+                employees: Object.entries(sec.employees).sort((a,b)=>b[1]-a[1]).map(([name,count])=>({name, count}))
+            }));
+            const totals = details.map(d=>({ name:d.name, total:d.total }));
+            return { totals, details };
+        }
+
+        async function loadSectorChartsFromRncHeaders(year, month){
+            try {
+                const [rncs, groupsMap] = await Promise.all([fetchAllRncsFinalized(), fetchGroupsMap()]);
+                if (!year || !month) {
+                    // Se não selecionado, apenas mostrar pizza de totais gerais e cards
+                    const { totals, details } = buildEmployeesBySectorFromRncs(rncs, groupsMap);
+                    createEmployeesBySectorChart(totals, details);
+                    return;
+                }
+                const items = buildSectorsBiweeklyFromRncs(rncs, year, month, groupsMap);
+                createSectorsBiweeklyChart(items);
+                const { totals, details } = buildEmployeesBySectorFromRncs(rncs, groupsMap);
+                createEmployeesBySectorChart(totals, details);
+            } catch(e){ console.error('Erro ao carregar gráficos por setor a partir de ASSINATURAS CABEÇALHO:', e); }
+        }
+
+        // Carrega todos os gráficos bi-semanais de uma vez
+        window.loadBiweeklyChart = async function loadBiweeklyChart(){
+            const yEl = document.getElementById('biweeklyYearSelect');
+            const mEl = document.getElementById('biweeklyMonthSelect');
+            const year = yEl && yEl.value ? yEl.value : '';
+            const month = mEl && mEl.value ? mEl.value : '';
+            const loading = document.getElementById('biweeklyChartLoading');
+            const canvas = document.getElementById('biweeklyChart');
+            if (!year || !month) {
+                if (loading) { loading.style.display = 'block'; loading.innerHTML = '<div style="font-size: 18px; margin-bottom: 10px;">📊</div><div>Selecione o ano e mês para visualizar o gráfico</div>'; }
+                if (canvas) canvas.style.display = 'none';
+                return;
+            }
+            try {
+                const q = `year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`;
+                const urls = [
+                    `${BASE}/api/charts/biweekly-data?${q}`,
+                    `${BASE}/api/charts/sectors-biweekly?${q}`,
+                    `${BASE}/api/charts/employees-by-sector?${q}`
+                ];
+                const [r1,r2,r3] = await Promise.all(urls.map(u=>fetch(u, { credentials:'include' })));
+                const [d1,d2,d3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
+
+                // Indicadores principais
+                const stats = d1.data || d1 || {};
+                const total = Number(stats.total ?? (Number(stats.quinzena_1||0)+Number(stats.quinzena_2||0)) || 0);
+                const q1 = Number(stats.quinzena_1 ?? stats.first ?? 0);
+                const q2 = Number(stats.quinzena_2 ?? stats.second ?? 0);
+                const avg = Number(stats.media_dia ?? stats.avg_per_day ?? ((total/30).toFixed(1)));
+                const setText = (id,val)=>{ const el=document.getElementById(id); if (el) el.textContent = String(val); };
+                setText('biweeklyTotal', total);
+                setText('biweeklyFirst', q1);
+                setText('biweeklySecond', q2);
+                setText('biweeklyAverage', isNaN(avg) ? (total/30).toFixed(1) : avg);
+                const indicators = document.getElementById('biweeklyIndicators'); if (indicators) indicators.style.display = 'block';
+                createBiweeklyChart(stats);
+
+                // Substituir gráficos de setores para usar ASSINATURAS CABEÇALHO (SETOR RESPONSÁVEL)
+                await loadSectorChartsFromRncHeaders(year, month);
+            } catch(e) {
+                console.error('Erro ao carregar gráficos quinzenais:', e);
+            }
+        };
+
+        // Auto refresh da aba Setores (inclui quinzenas)
+        window.startSetorAutoRefresh = function startSetorAutoRefresh(){
+            window.stopSetorAutoRefresh();
+            // refresh a cada 30s
+            _setorAutoRefresh = setInterval(() => {
+                try { window.applySetorFilters && applySetorFilters(); } catch(_){ }
+                try { window.loadBiweeklyChart && loadBiweeklyChart(); } catch(_){ }
+            }, 30000);
+            // primeira carga imediata
+            try { applySetorFilters(); } catch(_){ }
+            try { loadBiweeklyChart(); } catch(_){ }
+        };
+
+        window.stopSetorAutoRefresh = function stopSetorAutoRefresh(){
+            if (_setorAutoRefresh) { clearInterval(_setorAutoRefresh); _setorAutoRefresh = null; }
+        };
+        // Inicialização leve ao carregar a página
+        document.addEventListener('DOMContentLoaded', function(){
+            try { ensureSetorFiltersPopulated(); } catch(_){ }
+            try { initializeBiweeklySelectors(); } catch(_){ }
+        });
+    })();
+    </script>
+ 
 </body>
 </html>
