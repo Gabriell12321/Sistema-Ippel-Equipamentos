@@ -45,7 +45,7 @@ app.post('/send-email', async (req, res) => {
 
         // Configuração do e-mail
         const mailOptions = {
-            from: 'seu-email@gmail.com', // Substitua pelo seu e-mail
+            from: SMTP_USER || 'no-reply@ippel.local', // Use variável de ambiente SMTP_USER quando disponível
             to: recipientEmail,
             subject: subject,
             text: content,
