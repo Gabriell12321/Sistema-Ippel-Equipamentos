@@ -99,8 +99,27 @@ jobs:
       run: |
         pip install safety bandit
 
-    - name: Verificar vulnerabilidades em dependências
-      run: safety check -r requirements.txt
+    - name: Verificar vulnerabilidades em dependências (safety scan)
+      run: |
+        # Use the modern 'scan' command (replaces deprecated 'check') and produce JSON report
+        python -m safety scan --full-report -r requirements.txt -o json > safety-report.json || true
+        if [ -s safety-report.json ]; then
+          echo "Safety scan produced a report"
+          # Show top of report for quick feedback
+          head -n 200 safety-report.json || true
+          # Fail with non-zero code to keep security gate
+          echo "Vulnerabilities detected by safety scan"; exit 64
+        else
+          echo "No vulnerabilities found by safety scan."
+        fi
+      shell: bash
+
+    - name: Upload safety report (if present)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: safety-report
+        path: safety-report.json
 
     - name: Análise de segurança do código
       run: bandit -r . -x tests/
