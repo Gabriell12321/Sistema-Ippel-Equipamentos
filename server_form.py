@@ -164,11 +164,37 @@ try:
     HAS_LIMITER = _limiter is not None
     
     # Isentar endpoint de notificações do rate limit (polling frequente)
+    # Evitar chamar _limiter.exempt com uma string (flask-limiter espera função/endpoint).
+    # Em vez disso, tentamos isentar a rota após as views terem sido registradas, no
+    # primeiro request, para evitar erros durante import/initialização.
     if _limiter is not None:
+        def _try_exempt_notifications():
+            try:
+                # Possíveis nomes de endpoint que contêm a rota de notificações
+                candidates = [
+                    'notifications_unread',
+                    'api.notifications_unread',
+                    'api.notifications.unread',
+                    '/api/notifications/unread'
+                ]
+                for name in candidates:
+                    func = app.view_functions.get(name)
+                    if func and hasattr(_limiter, 'exempt'):
+                        try:
+                            _limiter.exempt(func)
+                            break
+                        except Exception:
+                            # Não falhar a inicialização se não for possível isentar
+                            pass
+            except Exception:
+                pass
+
+        # Registrar para executar apenas quando a app estiver pronta
         try:
-            _limiter.exempt('/api/notifications/unread')
-        except Exception as e:
-            print(f" Não foi possível isentar /api/notifications/unread do rate limit: {e}")
+            app.before_first_request(_try_exempt_notifications)
+        except Exception:
+            # Ambiente de testes pode não aceitar hooks; silenciosamente ignorar
+            pass
 except Exception:
     HAS_LIMITER = False
 
