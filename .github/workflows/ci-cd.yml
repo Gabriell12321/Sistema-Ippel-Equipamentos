@@ -321,6 +321,7 @@ jobs:
     steps:
     - name: Limpar imagens Docker antigas
       uses: actions/delete-package-versions@v4
+      continue-on-error: true
       with:
         package-name: ${{ env.IMAGE_NAME }}
         package-type: container
