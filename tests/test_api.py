@@ -42,28 +42,24 @@ def test_field_locks_api():
         print(f"   ❌ Erro: {e}")
 
 if __name__ == "__main__":
+    # Executa os testes manualmente quando rodado como script
     test_field_locks_api()
-        if 'departments' in data:
-            print(f"   🏢 Departamentos: {len(data['departments'])}")
-    else:
-        print(f"   ❌ Erro: {response.text}")
-except Exception as e:
-    print(f"   ❌ Erro de conexão: {e}")
 
-print("\n🔍 Testando API de GARANTIA...")
-try:
-    response = requests.get(f"{base_url}/api/indicadores-detalhados?tipo=garantia", timeout=10)
-    print(f"   Status: {response.status_code}")
-    if response.status_code == 200:
-        data = response.json()
-        print(f"   ✅ Dados recebidos: {list(data.keys())}")
-        if 'monthlyData' in data:
-            print(f"   📊 Meses: {len(data['monthlyData'])}")
-        if 'departments' in data:
-            print(f"   🏢 Departamentos: {len(data['departments'])}")
-    else:
-        print(f"   ❌ Erro: {response.text}")
-except Exception as e:
-    print(f"   ❌ Erro de conexão: {e}")
+    # Teste simples de garantia
+    print("\n🔍 Testando API de GARANTIA...")
+    try:
+        response = requests.get(f"{base_url}/api/indicadores-detalhados?tipo=garantia", timeout=10)
+        print(f"   Status: {response.status_code}")
+        if response.status_code == 200:
+            data = response.json()
+            print(f"   ✅ Dados recebidos: {list(data.keys())}")
+            if 'monthlyData' in data:
+                print(f"   📊 Meses: {len(data['monthlyData'])}")
+            if 'departments' in data:
+                print(f"   🏢 Departamentos: {len(data['departments'])}")
+        else:
+            print(f"   ❌ Erro: {response.text}")
+    except Exception as e:
+        print(f"   ❌ Erro de conexão: {e}")
 
-print("\n✅ Teste das APIs concluído!")
+    print("\n✅ Teste das APIs concluído!")
