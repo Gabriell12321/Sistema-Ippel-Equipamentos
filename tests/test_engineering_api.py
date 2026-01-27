@@ -20,7 +20,6 @@ def test_engineering_api():
     try:
         login_response = session.post('http://127.0.0.1:5001/login', data=login_data)
         print(f"Login Status: {login_response.status_code}")
-        n°
         if login_response.status_code == 200:
             print("✅ Login realizado com sucesso")
             
