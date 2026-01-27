@@ -10,8 +10,7 @@ import json
 
 # Configurações
 BASE_URL = "http://localhost:5000"
-TEST_EMAIL = "admin@ippel.com"  # Ajuste conforme necessário
-TEST_PASSWORD = "admin123"       # Ajuste conforme necessário
+from tests.test_config import TEST_EMAIL, TEST_PASSWORD
 
 def test_login():
     """Testa o login para obter sessão"""

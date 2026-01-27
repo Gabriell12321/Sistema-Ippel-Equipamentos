@@ -10,8 +10,7 @@ import json
 
 # Configurações
 BASE_URL = "http://localhost:5001"
-TEST_EMAIL = "admin@ippel.com.br"
-TEST_PASSWORD = "admin123"
+from tests.test_config import TEST_EMAIL, TEST_PASSWORD
 
 def test_api_direct():
     """Testar a API diretamente"""

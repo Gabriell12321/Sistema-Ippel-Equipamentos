@@ -10,8 +10,7 @@ import sqlite3
 
 # Configurações
 BASE_URL = "http://localhost:5001"
-TEST_EMAIL = "admin@ippel.com.br"
-TEST_PASSWORD = "admin123"
+from tests.test_config import TEST_EMAIL, TEST_PASSWORD
 DB_PATH = "ippel_system.db"
 
 def test_login():

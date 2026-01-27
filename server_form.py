@@ -104,6 +104,7 @@ from routes.auth import auth as auth_bp
 from routes.rnc import rnc as rnc_bp
 from routes.print_reports import print_reports as print_reports_bp
 from routes.field_locks import field_locks_bp
+from routes.audit import audit_bp
 
 try:
     from flask_socketio import SocketIO, emit, join_room, leave_room  # type: ignore
@@ -212,20 +213,26 @@ if HAS_COMPRESS and Compress is not None:
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # Secret key estável: lê de variável de ambiente ou de arquivo local persistente
+# IMPORTANT: Do NOT write secrets to the repository. Prefer environment variables or a
+# secret file placed outside the repository (e.g. in an 'instance/' directory that is
+# added to .gitignore). If none is provided, use an ephemeral in-memory secret for dev.
 _secret_from_env = os.environ.get('IPPEL_SECRET_KEY')
 if _secret_from_env:
     app.secret_key = _secret_from_env
 else:
-    _secret_file = os.path.join(os.path.dirname(__file__), 'ippel_secret.key')
+    # Recommended path outside the repo to store a persistent secret (not committed)
+    _instance_secret_file = os.path.join(os.path.dirname(__file__), '..', 'instance', 'ippel_secret.key')
     try:
-        if os.path.exists(_secret_file):
-            with open(_secret_file, 'r', encoding='utf-8') as f:
+        if os.path.exists(_instance_secret_file):
+            with open(_instance_secret_file, 'r', encoding='utf-8') as f:
                 app.secret_key = f.read().strip()
         else:
-            _new_secret = secrets.token_hex(32)
-            with open(_secret_file, 'w', encoding='utf-8') as f:
-                f.write(_new_secret)
-            app.secret_key = _new_secret
+            # Fallback: ephemeral in-memory secret (do not persist to disk)
+            app.secret_key = secrets.token_hex(32)
+            logging.warning(
+                "No IPPEL_SECRET_KEY found. Using ephemeral secret; set IPPEL_SECRET_KEY env var "
+                "or place a secret file in 'instance/ippel_secret.key' outside the repository."
+            )
     except Exception:
         app.secret_key = secrets.token_hex(32)
 
@@ -291,8 +298,9 @@ try:
                 "'unsafe-eval'",  # Necessário para Socket.IO
                 'https://cdn.jsdelivr.net',
                 'https://cdnjs.cloudflare.com',
+                'https://cdn.socket.io',  # Socket.IO CDN
             ],
-            'connect-src': ["'self'", 'ws:', 'wss:', 'https://cdnjs.cloudflare.com', 'https://cdn.jsdelivr.net'],
+            'connect-src': ["'self'", 'ws:', 'wss:', 'https://cdnjs.cloudflare.com', 'https://cdn.jsdelivr.net', 'https://cdn.socket.io'],
             'manifest-src': ["'self'"],
         }
         # Importante: não usar nonces enquanto ainda existem event handlers inline,
@@ -321,7 +329,7 @@ try:
                     # temporário: permitir inline no report-only para reduzir ruído enquanto migramos
                                     'style-src': "'self' 'unsafe-inline' https://fonts.googleapis.com",
                 'font-src': "'self' data: https://fonts.gstatic.com",
-                    'script-src': "'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
+                    'script-src': "'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.socket.io",
                     'connect-src': "'self'",
                     'manifest-src': "'self'",
                     'report-uri': "/csp-report",
@@ -378,8 +386,8 @@ if not HAS_TALISMAN:
                 "img-src 'self' data: blob: https://api.dicebear.com;",
                 "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;",
                 "font-src 'self' data: https://fonts.gstatic.com;",
-                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;",
-                "connect-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;",
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.socket.io;",
+                "connect-src 'self' ws: wss: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.socket.io;",
                 "manifest-src 'self';",
             ])
             resp.headers['Content-Security-Policy'] = policy
@@ -394,8 +402,8 @@ if not HAS_TALISMAN:
                 "img-src 'self' data: blob: https://api.dicebear.com;",
                 "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;",
                 "font-src 'self' data: https://fonts.gstatic.com;",
-                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;",
-                "connect-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;",
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.socket.io;",
+                "connect-src 'self' ws: wss: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.socket.io;",
                 "manifest-src 'self';",
                 "report-uri /csp-report;",
             ])
@@ -528,6 +536,15 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(rnc_bp)
 app.register_blueprint(print_reports_bp)
 app.register_blueprint(field_locks_bp)
+app.register_blueprint(audit_bp)
+
+# Inicializar tabela de auditoria
+try:
+    from services.audit import init_audit_table
+    init_audit_table()
+    logger.info(" Tabela de auditoria inicializada")
+except Exception as e:
+    logger.error(f" Erro ao inicializar tabela de auditoria: {e}")
 
 # Registrar Blueprint de Notificações
 try:
@@ -536,6 +553,14 @@ try:
     logger.info(" Blueprint de notificações registrado")
 except Exception as e:
     logger.error(f" Erro ao registrar blueprint de notificações: {e}")
+
+# Registrar Blueprint de Notificações Persistentes (Admin)
+try:
+    from services.persistent_notifications_api import register_persistent_notifications_routes
+    register_persistent_notifications_routes(app)
+    logger.info(" Blueprint de notificações persistentes registrado")
+except Exception as e:
+    logger.error(f" Erro ao registrar blueprint de notificações persistentes: {e}")
 
 
 # Temporary debug endpoint: list registered routes (safe for local debugging)
@@ -801,6 +826,29 @@ def api_rnc_next_number():
             logger.error(f"Erro ao obter próximo número RNC: {e}")
         except Exception:
             pass
+        return jsonify({'success': False, 'message': 'Falha ao gerar próximo número'}), 500
+
+@app.get('/api/ro/next-number')
+def api_ro_next_number():
+    """Retorna o próximo número R.O que será gerado"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT MAX(CAST(ro_number AS INTEGER)) as max_num FROM ros')
+        result = cursor.fetchone()
+        
+        if result and result[0] is not None:
+            max_num = result[0]
+        else:
+            max_num = 19
+        
+        next_number = max_num + 1
+        return_db_connection(conn)
+        return jsonify({'success': True, 'next_number': next_number})
+    except Exception as e:
+        logger.error(f"Erro ao obter próximo número R.O: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'message': 'Falha ao gerar próximo número'}), 500
 
 # =============== Optional Nim Tools proxy ===============
@@ -1124,6 +1172,20 @@ def init_database():
             UNIQUE(group_id, permission_name)
         )
     ''')
+    
+    # Tabela de múltiplos gerentes por grupo
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS group_managers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            manager_type TEXT NOT NULL CHECK(manager_type IN ('manager', 'sub_manager')),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (group_id) REFERENCES groups (id),
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            UNIQUE(group_id, user_id, manager_type)
+        )
+    ''')
 
     # Tabela de usuários
     cursor.execute('''
@@ -1205,6 +1267,133 @@ def init_database():
         except sqlite3.OperationalError:
             pass
 
+    # Tabela de R.O (Relatório de Ocorrência)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ros (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ro_number TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            equipment TEXT,
+            client TEXT,
+            priority TEXT DEFAULT 'Média',
+            status TEXT DEFAULT 'Pendente',
+            user_id INTEGER,
+            creator_name TEXT,
+            assigned_user_id INTEGER,
+            is_deleted BOOLEAN DEFAULT 0,
+            deleted_at TIMESTAMP,
+            finalized_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            drawing_number TEXT,
+            revision TEXT,
+            conj TEXT,
+            description_drawing TEXT,
+            model TEXT,
+            material TEXT,
+            quantity TEXT,
+            price REAL DEFAULT 0,
+            assigned_group_id INTEGER,
+            causador_user_id INTEGER,
+            instruction_retrabalho TEXT,
+            cause_ro TEXT,
+            price_note TEXT,
+            area_responsavel TEXT,
+            ass_responsavel TEXT,
+            inspetor TEXT,
+            responsavel TEXT,
+            signature_inspection2_name TEXT,
+            setor TEXT,
+            purchase_order TEXT,
+            position TEXT,
+            cv TEXT,
+            mp TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (assigned_user_id) REFERENCES users (id)
+        )
+    ''')
+
+    # Tabela de Garantias (similar a R.O)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS garantias (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            garantia_number TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            equipment TEXT,
+            client TEXT,
+            priority TEXT DEFAULT 'Média',
+            status TEXT DEFAULT 'Pendente',
+            user_id INTEGER,
+            creator_name TEXT,
+            assigned_user_id INTEGER,
+            is_deleted BOOLEAN DEFAULT 0,
+            deleted_at TIMESTAMP,
+            finalized_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            cv TEXT,
+            cv_date TEXT,
+            quantity TEXT,
+            item_fornecido TEXT,
+            drawing_number TEXT,
+            revision TEXT,
+            conjunto TEXT,
+            description_drawing TEXT,
+            modelo TEXT,
+            material TEXT,
+            price TEXT,
+            price_note TEXT,
+            sector TEXT,
+            area_responsavel TEXT,
+            ass_responsavel TEXT,
+            inspetor TEXT,
+            responsavel TEXT,
+            purchase_order TEXT,
+            position TEXT,
+            mp TEXT,
+            instruction_retrabalho TEXT,
+            cause_garantia TEXT,
+            action_garantia TEXT,
+            signature_inspection_name TEXT,
+            signature_inspection_date TEXT,
+            signature_engineering_name TEXT,
+            signature_engineering_date TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (assigned_user_id) REFERENCES users (id)
+        )
+    ''')
+    
+    # Colunas adicionais em garantias (para tabelas já existentes)
+    garantias_cols = [
+        'ALTER TABLE garantias ADD COLUMN garantia_number TEXT',
+        'ALTER TABLE garantias ADD COLUMN title TEXT',
+        'ALTER TABLE garantias ADD COLUMN description TEXT',
+        'ALTER TABLE garantias ADD COLUMN equipment TEXT',
+        'ALTER TABLE garantias ADD COLUMN client TEXT',
+        'ALTER TABLE garantias ADD COLUMN priority TEXT DEFAULT "Média"',
+        'ALTER TABLE garantias ADD COLUMN status TEXT DEFAULT "Pendente"',
+        'ALTER TABLE garantias ADD COLUMN user_id INTEGER',
+        'ALTER TABLE garantias ADD COLUMN creator_name TEXT',
+        'ALTER TABLE garantias ADD COLUMN sector TEXT',
+        'ALTER TABLE garantias ADD COLUMN area_responsavel TEXT',
+        'ALTER TABLE garantias ADD COLUMN cv TEXT',
+        'ALTER TABLE garantias ADD COLUMN cv_date TEXT',
+        'ALTER TABLE garantias ADD COLUMN quantity TEXT',
+        'ALTER TABLE garantias ADD COLUMN item_fornecido TEXT',
+        'ALTER TABLE garantias ADD COLUMN setor_causador TEXT',
+        'ALTER TABLE garantias ADD COLUMN is_deleted INTEGER DEFAULT 0',
+        'ALTER TABLE garantias ADD COLUMN deleted_at TIMESTAMP',
+        'ALTER TABLE garantias ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
+        'ALTER TABLE garantias ADD COLUMN updated_at TIMESTAMP'
+    ]
+    for col_sql in garantias_cols:
+        try:
+            cursor.execute(col_sql)
+        except sqlite3.OperationalError:
+            pass
+
     # Compartilhamento de RNCs
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS rnc_shares (
@@ -1246,6 +1435,8 @@ def init_database():
             user_id INTEGER NOT NULL,
             message TEXT NOT NULL,
             message_type TEXT DEFAULT 'text',
+            file_data BLOB,
+            file_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (rnc_id) REFERENCES rncs (id),
             FOREIGN KEY (user_id) REFERENCES users (id)
@@ -1302,6 +1493,19 @@ def init_database():
             valor_hora REAL NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Tabela de atas de reunião (simplificada: PDF + data)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS atas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data_reuniao DATE NOT NULL,
+            pdf_filename TEXT NOT NULL,
+            pdf_data BLOB NOT NULL,
+            user_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
 
@@ -1382,10 +1586,28 @@ def ensure_chat_viewed_at_column(existing_conn=None):
             conn.commit()
             logger.info(" Coluna viewed_at adicionada com sucesso")
         
+        if 'file_path' not in cols:
+            logger.info(" Adicionando coluna file_path à tabela chat_messages")
+            cursor.execute("ALTER TABLE chat_messages ADD COLUMN file_path TEXT DEFAULT NULL")
+            conn.commit()
+            logger.info(" Coluna file_path adicionada com sucesso")
+        
+        if 'file_data' not in cols:
+            logger.info(" Adicionando coluna file_data à tabela chat_messages")
+            cursor.execute("ALTER TABLE chat_messages ADD COLUMN file_data BLOB")
+            conn.commit()
+            logger.info(" Coluna file_data adicionada com sucesso")
+        
+        if 'file_name' not in cols:
+            logger.info(" Adicionando coluna file_name à tabela chat_messages")
+            cursor.execute("ALTER TABLE chat_messages ADD COLUMN file_name TEXT")
+            conn.commit()
+            logger.info(" Coluna file_name adicionada com sucesso")
+        
         if should_close:
             conn.close()
     except Exception as e:
-        logger.error(f" Erro ao garantir coluna viewed_at em chat_messages: {e}")
+        logger.error(f" Erro ao garantir colunas em chat_messages: {e}")
 
 def ensure_notifications_table_migration():
     """Migração da tabela notifications para compatibilidade com enhanced_notifications"""
@@ -1829,20 +2051,20 @@ def get_rnc_shared_users(rnc_id):
         return []
 
 def can_user_access_rnc(user_id, rnc_id):
-    """Verificar se usuário pode acessar RNC (criador, compartilhado ou admin)"""
+    """Verificar se usuário pode acessar RNC (criador, compartilhado, gerente/sub-gerente do grupo ou admin)"""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Verificar se é o criador
-        cursor.execute('SELECT user_id, department FROM rncs WHERE id = ?', (rnc_id,))
+        # Verificar se é o criador e pegar assigned_group_id
+        cursor.execute('SELECT user_id, department, assigned_group_id FROM rncs WHERE id = ?', (rnc_id,))
         rnc_data = cursor.fetchone()
         if not rnc_data:
             conn.close()
             logger.warning(f"RNC {rnc_id} não encontrada na verificação de acesso")
             return False
         
-        logger.info(f"Verificando acesso do usuário {user_id} à RNC {rnc_id}, criada por {rnc_data[0]}, departamento: {rnc_data[1]}")
+        logger.info(f"Verificando acesso do usuário {user_id} à RNC {rnc_id}, criada por {rnc_data[0]}, departamento: {rnc_data[1]}, grupo: {rnc_data[2]}")
         
         # Se é o criador
         if str(rnc_data[0]) == str(user_id):
@@ -1867,6 +2089,29 @@ def can_user_access_rnc(user_id, rnc_id):
             logger.info(f"Acesso permitido: usuário {user_id} tem permissão view_all_departments_rncs")
             conn.close()
             return True
+        
+        # Verificar se é gerente ou sub-gerente do grupo atribuído (NOVO - suporta múltiplos)
+        assigned_group_id = rnc_data[2]
+        if assigned_group_id:
+            # Verificar na nova tabela group_managers
+            cursor.execute('''
+                SELECT 1 FROM group_managers
+                WHERE group_id = ? AND user_id = ?
+            ''', (assigned_group_id, user_id))
+            if cursor.fetchone():
+                logger.info(f"Acesso permitido: usuário {user_id} é gerente/sub-gerente do grupo {assigned_group_id}")
+                conn.close()
+                return True
+            
+            # Verificar nas colunas antigas (compatibilidade)
+            cursor.execute('''
+                SELECT 1 FROM groups
+                WHERE id = ? AND (manager_user_id = ? OR sub_manager_user_id = ?)
+            ''', (assigned_group_id, user_id, user_id))
+            if cursor.fetchone():
+                logger.info(f"Acesso permitido: usuário {user_id} é gerente/sub-gerente do grupo {assigned_group_id} (coluna antiga)")
+                conn.close()
+                return True
         
         # Verificar se foi compartilhado com o usuário
         cursor.execute('''
@@ -1928,6 +2173,38 @@ def update_group_permissions(group_id, permissions):
         return True
     except Exception as e:
         logger.error(f"Erro ao atualizar permissões do grupo: {e}")
+        return False
+
+def user_is_manager(user_id):
+    """Verificar se o usuário é gerente ou sub-gerente de algum grupo"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Verificar na tabela group_managers
+        cursor.execute('''
+            SELECT 1 FROM group_managers
+            WHERE user_id = ?
+            LIMIT 1
+        ''', (user_id,))
+        if cursor.fetchone():
+            conn.close()
+            return True
+        
+        # Verificar nas colunas antigas (compatibilidade)
+        cursor.execute('''
+            SELECT 1 FROM groups
+            WHERE manager_user_id = ? OR sub_manager_user_id = ?
+            LIMIT 1
+        ''', (user_id, user_id))
+        if cursor.fetchone():
+            conn.close()
+            return True
+        
+        conn.close()
+        return False
+    except Exception as e:
+        logger.error(f"Erro ao verificar se usuário é gerente: {e}")
         return False
 
 def user_in_group(user_id, group_name):
@@ -2132,31 +2409,67 @@ def clear_cache_test():
     """Página de teste para limpar cache do browser"""
     return render_template('clear_cache_test.html')
 
+@app.route('/test-dashboard-api')
+def test_dashboard_api():
+    """Página de teste das APIs do dashboard"""
+    return render_template('test_dashboard_api.html')
+
 @app.route('/dashboard')
 def dashboard():
     """Dashboard interativo protegido por sessão."""
     if 'user_id' not in session:
         return redirect('/')
     
-    # Obter informações de permissões do usuário para o frontend
-    user_permissions = {
-        'canViewAllRncs': has_permission(session['user_id'], 'view_all_rncs'),
-        'canViewFinalizedRncs': has_permission(session['user_id'], 'view_finalized_rncs'),
-        'canViewCharts': has_permission(session['user_id'], 'view_charts'),
-        'canViewReports': has_permission(session['user_id'], 'view_reports'),
-    'hasAdminAccess': has_permission(session['user_id'], 'admin_access'),
-    # Permissão correta: qualquer usuário com 'create_rnc' pode criar RNCs
-    'canCreateRnc': has_permission(session['user_id'], 'create_rnc'),
-        'canAssignRncToGroup': has_permission(session['user_id'], 'assign_rnc_to_group'),
-        'canViewLevantamento1415': has_permission(session['user_id'], 'view_levantamento_14_15'),
-        'canViewGroupsForAssignment': has_permission(session['user_id'], 'view_groups_for_assignment'),
-        'canViewUsersForAssignment': has_permission(session['user_id'], 'view_users_for_assignment'),
-        'canViewEngineeringRncs': has_permission(session['user_id'], 'view_engineering_rncs'),
-        'canPrintReports': True,  # Forçando permissão de impressão para todos os usuários
-        'department': get_user_department(session['user_id'])
-    }
-    
-    return render_template('dashboard_improved.html', user_permissions=user_permissions)
+    try:
+        # Buscar dados do usuário
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, name, email, department, role, avatar_key, avatar_prefs
+            FROM users WHERE id = ?
+        ''', (session['user_id'],))
+        user_row = cursor.fetchone()
+        return_db_connection(conn)
+        
+        if not user_row:
+            logger.error(f"Usuário não encontrado: {session['user_id']}")
+            return redirect('/')
+        
+        user_data = {
+            'id': user_row[0],
+            'name': user_row[1],
+            'email': user_row[2],
+            'department': user_row[3] or 'Sem Departamento',
+            'role': user_row[4] or 'user',
+            'avatar': user_row[5] if len(user_row) > 5 else None,
+            'avatarPrefs': user_row[6] if len(user_row) > 6 else None
+        }
+        
+        # Obter informações de permissões do usuário para o frontend
+        user_permissions = {
+            'canViewAllRncs': has_permission(session['user_id'], 'view_all_rncs'),
+            'canViewFinalizedRncs': has_permission(session['user_id'], 'view_finalized_rncs'),
+            'canViewCharts': has_permission(session['user_id'], 'view_charts'),
+            'canViewReports': has_permission(session['user_id'], 'view_reports'),
+            'hasAdminAccess': has_permission(session['user_id'], 'admin_access'),
+            'canCreateRnc': has_permission(session['user_id'], 'create_rnc'),
+            'canAssignRncToGroup': has_permission(session['user_id'], 'assign_rnc_to_group'),
+            'canViewLevantamento1415': has_permission(session['user_id'], 'view_levantamento_14_15'),
+            'canViewGroupsForAssignment': has_permission(session['user_id'], 'view_groups_for_assignment'),
+            'canViewUsersForAssignment': has_permission(session['user_id'], 'view_users_for_assignment'),
+            'canViewEngineeringRncs': has_permission(session['user_id'], 'view_engineering_rncs'),
+            'canPrintReports': True,
+            'department': user_data['department']
+        }
+        
+        logger.info(f"Dashboard carregado para usuário: {user_data['name']} ({user_data['department']})")
+        
+        return render_template('dashboard_improved.html', 
+                             user=user_data,
+                             user_permissions=user_permissions)
+    except Exception as e:
+        logger.error(f"Erro ao carregar dashboard: {e}")
+        return redirect('/')
 
 @app.route('/dashboard/expenses')
 def dashboard_expenses():
@@ -3040,6 +3353,319 @@ def form():
     
     return render_template('new_rnc.html', clients=clients)
 
+@app.route('/form_ro')
+def form_ro():
+    """Formulário R.O (apenas para administradores)"""
+    if 'user_id' not in session:
+        return redirect('/')
+    
+    # Verificar permissão correta para criar RNCs
+    if not has_permission(session['user_id'], 'create_rnc'):
+        return render_template('error.html', 
+                             error_title='Acesso Negado', 
+                             error_message='Você não tem permissão para criar R.O.'), 403
+    
+    # Buscar clientes cadastrados na tabela clients
+    try:
+        ensure_clients_table()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT name FROM clients ORDER BY name')
+        clients = [row[0] for row in cursor.fetchall()]
+        conn.close()
+    except Exception as e:
+        logger.error(f"Erro ao carregar clientes para formulário: {e}")
+        clients = []
+    
+    return render_template('new_ro.html', clients=clients)
+
+# FUNÇÃO DESABILITADA - usando create_ro na linha 9417 que está completa
+# @app.route('/api/ro/create', methods=['POST'])
+# def api_ro_create():
+#     """API para criar novo R.O"""
+#     if 'user_id' not in session:
+#         return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+#     
+#     if not has_permission(session['user_id'], 'create_rnc'):
+#         return jsonify({'success': False, 'message': 'Sem permissão para criar R.O'}), 403
+#     
+#     try:
+#         data = request.get_json()
+#         if not data:
+#             return jsonify({'success': False, 'message': 'Dados inválidos'}), 400
+#         
+#         conn = get_db_connection()
+#         cursor = conn.cursor()
+#         
+#         # Gerar número do R.O
+#         cursor.execute('SELECT MAX(CAST(ro_number AS INTEGER)) as max_num FROM ros')
+#         result = cursor.fetchone()
+#         
+#         if result and result[0] is not None:
+#             max_num = result[0]
+#         else:
+#             max_num = 19
+#         
+#         ro_number = str(max_num + 1)
+#         
+#         # Buscar nome do criador
+#         cursor.execute('SELECT name FROM users WHERE id = ?', (session['user_id'],))
+#         user_result = cursor.fetchone()
+#         creator_name = user_result[0] if user_result else 'Sistema'
+#         
+#         # Inserir R.O
+#         cursor.execute('''
+#             INSERT INTO ros (
+#                 ro_number, title, description, equipment, client, 
+#                 priority, status, user_id, creator_name,
+#                 drawing_number, revision, conjunto, description_drawing,
+#                 modelo, material, quantity, cv, mp, position,
+#                 area_responsavel, ass_responsavel, inspetor, responsavel,
+#                 setor, purchase_order, instruction_retrabalho, cause_ro,
+#                 price, price_note, created_at
+#             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+#                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+#         ''', (
+#             ro_number,
+#             data.get('title', ''),
+#             data.get('description', ''),
+#             data.get('equipment', ''),
+#             data.get('client', ''),
+#             data.get('priority', 'Média'),
+#             'Pendente',
+#             session['user_id'],
+#             creator_name,
+#             data.get('drawing_number', ''),
+#             data.get('revision', ''),
+#             data.get('conjunto', ''),
+#             data.get('description_drawing', ''),
+#             data.get('modelo', ''),
+#             data.get('material', ''),
+#             data.get('quantity', ''),
+#             data.get('cv', ''),
+#             data.get('mp', ''),
+#             data.get('position', ''),
+#             data.get('area_responsavel', ''),
+#             data.get('ass_responsavel', ''),
+#             data.get('inspetor', ''),
+#             data.get('responsavel', ''),
+#             data.get('setor', ''),
+#             data.get('purchase_order', ''),
+#             data.get('instruction_retrabalho', ''),
+#             data.get('cause_ro', ''),
+#             data.get('price', ''),
+#             data.get('price_note', '')
+#         ))
+#         
+#         ro_id = cursor.lastrowid
+#         conn.commit()
+#         return_db_connection(conn)
+#         
+#         logger.info(f"R.O {ro_number} criado com sucesso por {creator_name}")
+#         
+#         return jsonify({
+#             'success': True,
+#             'message': 'R.O criado com sucesso',
+#             'ro_id': ro_id,
+#             'ro_number': ro_number
+#         })
+#         
+#     except Exception as e:
+#         logger.error(f"Erro ao criar R.O: {e}")
+#         import traceback
+#         traceback.print_exc()
+#         return jsonify({'success': False, 'message': f'Erro interno: {str(e)}'}), 500
+    
+@app.route('/api/ro/list', methods=['GET'])
+def api_ro_list():
+    """API para listar R.Os"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Listar todos os R.Os (não deletados)
+        cursor.execute('''
+            SELECT 
+                id, ro_number, title, description, equipment, client,
+                priority, status, user_id, creator_name, finalized_at,
+                created_at, updated_at
+            FROM ros
+            WHERE (is_deleted = 0 OR is_deleted IS NULL)
+            ORDER BY id DESC
+        ''')
+        
+        ros = cursor.fetchall()
+        return_db_connection(conn)
+        
+        ros_list = [
+            {
+                'id': ro[0],
+                'ro_number': ro[1],
+                'title': ro[2],
+                'description': ro[3],
+                'equipment': ro[4],
+                'client': ro[5],
+                'priority': ro[6],
+                'status': ro[7],
+                'user_id': ro[8],
+                'creator_name': ro[9],
+                'finalized_at': ro[10],
+                'created_at': ro[11],
+                'updated_at': ro[12]
+            }
+            for ro in ros
+        ]
+        
+        return jsonify({
+            'success': True,
+            'ros': ros_list
+        })
+        
+    except Exception as e:
+        logger.error(f"Erro ao listar R.Os: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Erro interno: {str(e)}'}), 500
+
+@app.route('/ro/<int:ro_id>')
+def view_ro(ro_id):
+    """Visualizar R.O específico"""
+    if 'user_id' not in session:
+        return redirect('/')
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT r.*, u.name as creator_name,
+                   COALESCE(g1.name, g2.name, r.area_responsavel) as area_responsavel_name
+            FROM ros r
+            LEFT JOIN users u ON r.user_id = u.id
+            LEFT JOIN groups g1 ON (r.area_responsavel GLOB '[0-9]*' AND CAST(r.area_responsavel AS INTEGER) = g1.id)
+            LEFT JOIN groups g2 ON (r.area_responsavel NOT GLOB '[0-9]*' AND LOWER(TRIM(r.area_responsavel)) = LOWER(TRIM(g2.name)))
+            WHERE r.id = ?
+        ''', (ro_id,))
+        
+        ro_data = cursor.fetchone()
+        return_db_connection(conn)
+        
+        if not ro_data:
+            return render_template('error.html', message='R.O não encontrado')
+        
+        ro_dict = dict(ro_data)
+        
+        return render_template('view_ro.html', ro=ro_dict)
+        
+    except Exception as e:
+        logger.error(f"Erro ao visualizar R.O {ro_id}: {e}")
+        return render_template('error.html', message='Erro interno do sistema')
+
+
+@app.route('/edit_ro/<int:ro_id>')
+def edit_ro(ro_id):
+    """Página para editar R.O"""
+    if 'user_id' not in session:
+        return redirect('/')
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT r.id, r.ro_number, r.title, r.description, r.equipment, r.client, r.mp, 
+                   r.revision, r.position, r.cv, r.drawing_number, r.conjunto, r.modelo,
+                   r.description_drawing, r.quantity, r.material, r.purchase_order,
+                   r.responsavel, r.inspetor, r.area_responsavel, r.ass_responsavel,
+                   r.setor, r.instruction_retrabalho, r.cause_ro, r.action_ro,
+                   r.price, r.price_note, r.signature_inspection2_name, r.user_id,
+                   r.created_at, r.updated_at, r.status,
+                   u.name as creator_name,
+                   COALESCE(g1.name, g2.name, r.area_responsavel) as area_responsavel_name
+            FROM ros r
+            LEFT JOIN users u ON r.user_id = u.id
+            LEFT JOIN groups g1 ON (r.area_responsavel GLOB '[0-9]*' AND CAST(r.area_responsavel AS INTEGER) = g1.id)
+            LEFT JOIN groups g2 ON (r.area_responsavel NOT GLOB '[0-9]*' AND LOWER(TRIM(r.area_responsavel)) = LOWER(TRIM(g2.name)))
+            WHERE r.id = ?
+        ''', (ro_id,))
+        
+        ro_data = cursor.fetchone()
+        
+        # Buscar grupos para o dropdown
+        cursor.execute('SELECT id, name FROM groups ORDER BY name')
+        groups = cursor.fetchall()
+        
+        # Buscar clientes da tabela clients
+        cursor.execute('SELECT name FROM clients ORDER BY name')
+        clients_rows = cursor.fetchall()
+        clients = [row[0] for row in clients_rows]
+        
+        # Buscar usuários para dropdown
+        cursor.execute('SELECT id, name FROM users WHERE is_active = 1 ORDER BY name')
+        users = cursor.fetchall()
+        
+        return_db_connection(conn)
+        
+        if not ro_data:
+            return render_template('error.html', message='R.O não encontrado')
+        
+        ro_dict = dict(ro_data)
+        groups_list = [{'id': g[0], 'name': g[1]} for g in groups]
+        users_list = [{'id': u[0], 'name': u[1]} for u in users]
+        
+        return render_template('edit_ro.html', ro=ro_dict, groups=groups_list, clients=clients, users=users_list)
+        
+    except Exception as e:
+        logger.error(f"Erro ao carregar edição R.O {ro_id}: {e}")
+        return render_template('error.html', message='Erro interno do sistema')
+
+
+@app.route('/ro/<int:ro_id>/responder')
+def responder_ro(ro_id):
+    """Página para responder R.O"""
+    if 'user_id' not in session:
+        return redirect('/')
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM ros WHERE id = ?', (ro_id,))
+        ro_data = cursor.fetchone()
+        
+        # Verificar se é admin
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session['user_id'],))
+        user_row = cursor.fetchone()
+        is_admin = user_row and user_row[0] == 'admin'
+        return_db_connection(conn)
+        
+        if not ro_data:
+            return render_template('error.html', message='R.O não encontrado')
+        
+        # Mapear colunas básicas
+        columns = [
+            'id', 'ro_number', 'title', 'description', 'equipment', 'client',
+            'priority', 'status', 'user_id', 'creator_name', 'assigned_user_id',
+            'is_deleted', 'deleted_at', 'finalized_at', 'created_at', 'updated_at',
+            'drawing_number', 'revision', 'conj', 'description_drawing',
+            'model', 'material', 'quantity', 'price', 'assigned_group_id',
+            'causador_user_id', 'instruction_retrabalho', 'cause_ro',
+            'price_note', 'area_responsavel', 'ass_responsavel',
+            'inspetor', 'responsavel', 'signature_inspection2_name',
+            'setor', 'purchase_order', 'position', 'cv', 'mp'
+        ]
+        
+        ro_dict = dict(zip(columns, ro_data))
+        
+        return render_template('responder_ro.html', ro=ro_dict, is_admin=is_admin)
+        
+    except Exception as e:
+        logger.error(f"Erro ao carregar resposta R.O {ro_id}: {e}")
+        return render_template('error.html', message='Erro interno do sistema')
+
     # rotas /api/login e /api/logout movidas para routes/auth.py (Blueprint)
 
 @app.route('/api/employee-performance')
@@ -3540,13 +4166,18 @@ def get_user_info():
                         OR r.assigned_user_id = ? 
                         OR rs.shared_with_user_id = ?
                         OR (r.assigned_group_id IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM group_managers gm
+                            WHERE gm.group_id = r.assigned_group_id 
+                            AND gm.user_id = ?
+                        ))
+                        OR (r.assigned_group_id IS NOT NULL AND EXISTS (
                             SELECT 1 FROM groups g 
                             WHERE g.id = r.assigned_group_id 
                             AND (g.manager_user_id = ? OR g.sub_manager_user_id = ?)
                         ))
                     )
                     ORDER BY r.id DESC
-                ''', (session['user_id'], session['user_id'], session['user_id'], session['user_id'], session['user_id']))
+                ''', (session['user_id'], session['user_id'], session['user_id'], session['user_id'], session['user_id'], session['user_id']))
 
         elif tab == 'finalized':
             # RNCs finalizados - mostrar todos
@@ -3581,9 +4212,23 @@ def get_user_info():
                     LEFT JOIN rnc_shares rs ON rs.rnc_id = r.id
                     WHERE (r.is_deleted = 0 OR r.is_deleted IS NULL) 
                     AND r.status = 'Finalizado' 
-                    AND (r.user_id = ? OR r.assigned_user_id = ? OR rs.shared_with_user_id = ?)
+                    AND (
+                        r.user_id = ? 
+                        OR r.assigned_user_id = ? 
+                        OR rs.shared_with_user_id = ?
+                        OR (r.assigned_group_id IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM group_managers gm
+                            WHERE gm.group_id = r.assigned_group_id 
+                            AND gm.user_id = ?
+                        ))
+                        OR (r.assigned_group_id IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM groups g 
+                            WHERE g.id = r.assigned_group_id 
+                            AND (g.manager_user_id = ? OR g.sub_manager_user_id = ?)
+                        ))
+                    )
                     ORDER BY r.id DESC
-                ''', (session['user_id'], session['user_id'], session['user_id']))
+                ''', (session['user_id'], session['user_id'], session['user_id'], session['user_id'], session['user_id'], session['user_id']))
 
         else:
             # Fallback para aba ativa - todos os RNCs
@@ -3692,13 +4337,14 @@ def get_user_info():
             SELECT r.*, 
                    u.name as user_name, 
                    au.name as assigned_user_name,
-                   g.name as area_responsavel_name,
+                   COALESCE(g1.name, g2.name, r.area_responsavel) as area_responsavel_name,
                    ui.name as inspetor_name,
                    ur.name as causador_name
             FROM rncs r 
             LEFT JOIN users u ON r.user_id = u.id 
             LEFT JOIN users au ON r.assigned_user_id = au.id
-            LEFT JOIN groups g ON CAST(r.area_responsavel AS INTEGER) = g.id
+            LEFT JOIN groups g1 ON (r.area_responsavel GLOB '[0-9]*' AND CAST(r.area_responsavel AS INTEGER) = g1.id)
+            LEFT JOIN groups g2 ON (r.area_responsavel NOT GLOB '[0-9]*' AND LOWER(TRIM(r.area_responsavel)) = LOWER(TRIM(g2.name)))
             LEFT JOIN users ui ON r.inspetor = ui.name COLLATE NOCASE
             LEFT JOIN users ur ON CAST(r.responsavel AS INTEGER) = ur.id
             WHERE r.id = ?
@@ -3737,11 +4383,13 @@ def get_user_info():
         except Exception:
             base_columns = [
                 'id','rnc_number','title','description','equipment','client','priority','status','user_id','assigned_user_id',
-                'is_deleted','deleted_at','finalized_at','created_at','updated_at','disposition_usar','disposition_retrabalhar',
+                'is_deleted','deleted_at','finalized_at','created_at','updated_at','price','disposition_usar','disposition_retrabalhar',
                 'disposition_rejeitar','disposition_sucata','disposition_devolver_estoque','disposition_devolver_fornecedor',
                 'inspection_aprovado','inspection_reprovado','inspection_ver_rnc','signature_inspection_date','signature_engineering_date',
-                'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name','price',
-                'department','instruction_retrabalho','cause_rnc','action_rnc'
+                'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name',
+                'instruction_retrabalho','cause_rnc','action_rnc','responsavel','inspetor','setor','material','quantity','drawing',
+                'area_responsavel','mp','revision','position','cv','conjunto','modelo','description_drawing','purchase_order',
+                'justificativa','price_note','usuario_valorista_id','cv_desenho','assigned_group_id','causador_user_id','ass_responsavel'
             ]
         columns = base_columns + ['user_name', 'assigned_user_name', 'area_responsavel_name', 'inspetor_name', 'causador_name']
         
@@ -3821,13 +4469,14 @@ def get_user_info():
             SELECT r.*, 
                    u.name as user_name, 
                    au.name as assigned_user_name,
-                   g.name as area_responsavel_name,
+                   COALESCE(g1.name, g2.name, r.area_responsavel) as area_responsavel_name,
                    ui.name as inspetor_name,
                    ur.name as causador_name
               FROM rncs r
               LEFT JOIN users u ON r.user_id = u.id
               LEFT JOIN users au ON r.assigned_user_id = au.id
-              LEFT JOIN groups g ON CAST(r.area_responsavel AS INTEGER) = g.id
+              LEFT JOIN groups g1 ON (r.area_responsavel GLOB '[0-9]*' AND CAST(r.area_responsavel AS INTEGER) = g1.id)
+              LEFT JOIN groups g2 ON (r.area_responsavel NOT GLOB '[0-9]*' AND LOWER(TRIM(r.area_responsavel)) = LOWER(TRIM(g2.name)))
               LEFT JOIN users ui ON r.inspetor = ui.name COLLATE NOCASE
               LEFT JOIN users ur ON CAST(r.responsavel AS INTEGER) = ur.id
              WHERE r.id = ?
@@ -3856,11 +4505,13 @@ def get_user_info():
         except Exception:
             base_columns = [
                 'id','rnc_number','title','description','equipment','client','priority','status','user_id','assigned_user_id',
-                'is_deleted','deleted_at','finalized_at','created_at','updated_at','disposition_usar','disposition_retrabalhar',
+                'is_deleted','deleted_at','finalized_at','created_at','updated_at','price','disposition_usar','disposition_retrabalhar',
                 'disposition_rejeitar','disposition_sucata','disposition_devolver_estoque','disposition_devolver_fornecedor',
                 'inspection_aprovado','inspection_reprovado','inspection_ver_rnc','signature_inspection_date','signature_engineering_date',
-                'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name','price',
-                'department','instruction_retrabalho','cause_rnc','action_rnc'
+                'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name',
+                'instruction_retrabalho','cause_rnc','action_rnc','responsavel','inspetor','setor','material','quantity','drawing',
+                'area_responsavel','mp','revision','position','cv','conjunto','modelo','description_drawing','purchase_order',
+                'justificativa','price_note','usuario_valorista_id','cv_desenho','assigned_group_id','causador_user_id','ass_responsavel'
             ]
         columns = base_columns + ['user_name', 'assigned_user_name', 'area_responsavel_name', 'inspetor_name', 'causador_name']
 
@@ -3876,8 +4527,11 @@ def get_user_info():
         logger.info(f"  - inspetor: {rnc_dict.get('inspetor')} -> {rnc_dict.get('inspetor_name')}")
         logger.info(f"  - responsavel: {rnc_dict.get('responsavel')} -> {rnc_dict.get('causador_name')}")
 
+        # Verificar se usuário é gerente de algum grupo
+        is_manager = user_is_manager(session['user_id'])
+
         # Sinalizar modo de resposta para o template (pode ajustar labels e lógica)
-        return render_template('edit_rnc_form.html', rnc=rnc_dict, is_editing=True, is_reply=True)
+        return render_template('edit_rnc_form.html', rnc=rnc_dict, is_editing=True, is_reply=True, is_admin=is_admin, is_manager=is_manager)
     except Exception as e:
         logger.error(f"Erro ao abrir modo Responder para RNC {rnc_id}: {e}")
         return render_template('error.html', message='Erro interno do sistema')
@@ -4068,13 +4722,14 @@ def get_user_info():
             SELECT r.*, 
                    u.name as user_name, 
                    au.name as assigned_user_name,
-                   g.name as area_responsavel_name,
+                   COALESCE(g1.name, g2.name, r.area_responsavel) as area_responsavel_name,
                    ui.name as inspetor_name,
                    ur.name as causador_name
             FROM rncs r 
             LEFT JOIN users u ON r.user_id = u.id 
             LEFT JOIN users au ON r.assigned_user_id = au.id
-            LEFT JOIN groups g ON CAST(r.area_responsavel AS INTEGER) = g.id
+            LEFT JOIN groups g1 ON (r.area_responsavel GLOB '[0-9]*' AND CAST(r.area_responsavel AS INTEGER) = g1.id)
+            LEFT JOIN groups g2 ON (r.area_responsavel NOT GLOB '[0-9]*' AND LOWER(TRIM(r.area_responsavel)) = LOWER(TRIM(g2.name)))
             LEFT JOIN users ui ON r.inspetor = ui.name COLLATE NOCASE
             LEFT JOIN users ur ON CAST(r.responsavel AS INTEGER) = ur.id
             WHERE r.id = ?
@@ -4110,11 +4765,13 @@ def get_user_info():
             # Fallback com conjunto amplo conhecido
             base_columns = [
                 'id','rnc_number','title','description','equipment','client','priority','status','user_id','assigned_user_id',
-                'is_deleted','deleted_at','finalized_at','created_at','updated_at','disposition_usar','disposition_retrabalhar',
+                'is_deleted','deleted_at','finalized_at','created_at','updated_at','price','disposition_usar','disposition_retrabalhar',
                 'disposition_rejeitar','disposition_sucata','disposition_devolver_estoque','disposition_devolver_fornecedor',
                 'inspection_aprovado','inspection_reprovado','inspection_ver_rnc','signature_inspection_date','signature_engineering_date',
-                'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name','price',
-                'department','instruction_retrabalho','cause_rnc','action_rnc'
+                'signature_inspection2_date','signature_inspection_name','signature_engineering_name','signature_inspection2_name',
+                'instruction_retrabalho','cause_rnc','action_rnc','responsavel','inspetor','setor','material','quantity','drawing',
+                'area_responsavel','mp','revision','position','cv','conjunto','modelo','description_drawing','purchase_order',
+                'justificativa','price_note','usuario_valorista_id','cv_desenho','assigned_group_id','causador_user_id','ass_responsavel'
             ]
         columns = base_columns + ['user_name', 'assigned_user_name', 'area_responsavel_name', 'inspetor_name', 'causador_name']
 
@@ -4131,8 +4788,12 @@ def get_user_info():
         logger.info(f"  - inspetor: {rnc_dict.get('inspetor')} -> {rnc_dict.get('inspetor_name')}")
         logger.info(f"  - responsavel: {rnc_dict.get('responsavel')} -> {rnc_dict.get('causador_name')}")
         
+        # Verificar se usuário é admin ou gerente
+        is_admin = has_permission(session['user_id'], 'admin_access')
+        is_manager = user_is_manager(session['user_id'])
+        
         # Retornar o mesmo template de criação, mas com dados preenchidos
-        return render_template('edit_rnc_form.html', rnc=rnc_dict, is_editing=True)
+        return render_template('edit_rnc_form.html', rnc=rnc_dict, is_editing=True, is_admin=is_admin, is_manager=is_manager)
         
     except Exception as e:
         logger.error(f"Erro ao editar RNC {rnc_id}: {e}")
@@ -4259,9 +4920,24 @@ def get_user_info():
         inspection_aprovado = get_bool('inspection_aprovado')
         inspection_reprovado = get_bool('inspection_reprovado')
         inspection_ver_rnc = data.get('inspection_ver_rnc', current.get('inspection_ver_rnc', ''))
-        instruction_retrabalho = data.get('instruction_retrabalho', current.get('instruction_retrabalho', ''))
-        cause_rnc = data.get('cause_rnc', current.get('cause_rnc', ''))
-        action_rnc = data.get('action_rnc', current.get('action_rnc', ''))
+        
+        # Controle de permissão para campos de resposta:
+        # Admin: pode editar description e instruction_retrabalho
+        # Usuário comum: pode editar cause_rnc e action_rnc
+        is_admin_user = has_permission(session['user_id'], 'admin_access')
+        
+        if is_admin_user:
+            # Admin edita description e instruction, mantém cause e action
+            instruction_retrabalho = data.get('instruction_retrabalho', current.get('instruction_retrabalho', ''))
+            cause_rnc = current.get('cause_rnc', '')  # Mantém valor atual
+            action_rnc = current.get('action_rnc', '')  # Mantém valor atual
+            description_val = data.get('description', current.get('description', ''))
+        else:
+            # Usuário comum edita cause e action, mantém description e instruction
+            instruction_retrabalho = current.get('instruction_retrabalho', '')  # Mantém valor atual
+            cause_rnc = data.get('cause_rnc', current.get('cause_rnc', ''))
+            action_rnc = data.get('action_rnc', current.get('action_rnc', ''))
+            description_val = current.get('description', '')  # Mantém valor atual
 
         cursor.execute('''
             UPDATE rncs 
@@ -4279,7 +4955,7 @@ def get_user_info():
             WHERE id = ?
         ''', (
             data.get('title', current.get('title','')),
-            data.get('description', current.get('description','')),
+            description_val,
             data.get('equipment', current.get('equipment','')),
             data.get('client', current.get('client','')),
             data.get('priority', current.get('priority','Média')),
@@ -4367,6 +5043,42 @@ def get_user_info():
             conn.close()
             return jsonify({'success': False, 'message': 'Erro interno do sistema'}), 500
         
+        # Obter colunas da tabela rncs para mapear índices
+        cursor.execute("PRAGMA table_info(rncs)")
+        columns_info = cursor.fetchall()
+        col_names = {col[1]: idx for idx, col in enumerate(columns_info)}
+        
+        # Validar assinaturas obrigatórias (TODAS as 3 devem estar preenchidas)
+        sig1_idx = col_names.get('signature_inspection_name', -1)
+        sig2_idx = col_names.get('signature_engineering_name', -1)
+        sig3_idx = col_names.get('signature_inspection2_name', -1)
+        
+        sig1 = rnc[sig1_idx] if sig1_idx >= 0 and sig1_idx < len(rnc) else None
+        sig2 = rnc[sig2_idx] if sig2_idx >= 0 and sig2_idx < len(rnc) else None
+        sig3 = rnc[sig3_idx] if sig3_idx >= 0 and sig3_idx < len(rnc) else None
+        
+        logger.info(f"Validando assinaturas RNC {rnc_id}: sig1='{sig1}', sig2='{sig2}', sig3='{sig3}'")
+        
+        # Verificar quais assinaturas estão faltando
+        assinaturas_faltantes = []
+        
+        if not sig1 or not str(sig1).strip() or str(sig1).strip().lower() in ['none', 'null']:
+            assinaturas_faltantes.append('VISTO - Qualidade')
+        if not sig2 or not str(sig2).strip() or str(sig2).strip().lower() in ['none', 'null']:
+            assinaturas_faltantes.append('VISTO - Gerente do Setor')
+        if not sig3 or not str(sig3).strip() or str(sig3).strip().lower() in ['none', 'null']:
+            assinaturas_faltantes.append('VISTO - Causador')
+        
+        logger.info(f"Assinaturas faltantes: {assinaturas_faltantes}")
+        
+        if len(assinaturas_faltantes) > 0:
+            conn.close()
+            faltantes_texto = ', '.join(assinaturas_faltantes)
+            return jsonify({
+                'success': False, 
+                'message': f'Para finalizar a RNC, é obrigatório preencher TODAS as três assinaturas. Faltando: {faltantes_texto}'
+            }), 400
+        
         # Verificar permissões
         user_id = session['user_id']
         cursor.execute('SELECT role FROM users WHERE id = ?', (user_id,))
@@ -4377,7 +5089,7 @@ def get_user_info():
             return jsonify({'success': False, 'message': 'Usuário não encontrado'}), 404
         
         user_role = user[0]
-        rnc_creator_id = rnc[8]  # user_id do RNC (ajustado para nova estrutura)
+        rnc_creator_id = rnc[8]
         is_creator = (user_id == rnc_creator_id)
         
         # Apenas o criador ou admin pode finalizar o RNC
@@ -5692,7 +6404,7 @@ def admin_managers():
 
 @app.route('/api/admin/groups/with-managers', methods=['GET'])
 def api_get_groups_with_managers():
-    """API para obter todos os grupos com informações de gerentes"""
+    """API para obter todos os grupos com informações de gerentes (suporta múltiplos gerentes)"""
     if 'user_id' not in session:
         return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
     
@@ -5703,6 +6415,7 @@ def api_get_groups_with_managers():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
+        # Buscar todos os grupos
         cursor.execute('''
             SELECT 
                 g.id,
@@ -5710,30 +6423,57 @@ def api_get_groups_with_managers():
                 g.description,
                 g.manager_user_id,
                 g.sub_manager_user_id,
-                m.name as manager_name,
-                m.email as manager_email,
-                sm.name as sub_manager_name,
-                sm.email as sub_manager_email,
                 (SELECT COUNT(*) FROM users WHERE group_id = g.id AND is_active = 1) as user_count
             FROM groups g
-            LEFT JOIN users m ON g.manager_user_id = m.id
-            LEFT JOIN users sm ON g.sub_manager_user_id = sm.id
             ORDER BY g.name
         ''')
         
         groups = []
         for row in cursor.fetchall():
+            group_id = row[0]
+            
+            # Buscar gerentes principais da nova tabela
+            cursor.execute('''
+                SELECT u.id, u.name, u.email
+                FROM group_managers gm
+                JOIN users u ON gm.user_id = u.id
+                WHERE gm.group_id = ? AND gm.manager_type = 'manager'
+                ORDER BY u.name
+            ''', (group_id,))
+            managers = [{'id': m[0], 'name': m[1], 'email': m[2]} for m in cursor.fetchall()]
+            
+            # Se não houver na nova tabela, usar coluna antiga (compatibilidade)
+            if not managers and row[3]:
+                cursor.execute('SELECT id, name, email FROM users WHERE id = ?', (row[3],))
+                old_manager = cursor.fetchone()
+                if old_manager:
+                    managers = [{'id': old_manager[0], 'name': old_manager[1], 'email': old_manager[2]}]
+            
+            # Buscar sub-gerentes da nova tabela
+            cursor.execute('''
+                SELECT u.id, u.name, u.email
+                FROM group_managers gm
+                JOIN users u ON gm.user_id = u.id
+                WHERE gm.group_id = ? AND gm.manager_type = 'sub_manager'
+                ORDER BY u.name
+            ''', (group_id,))
+            sub_managers = [{'id': m[0], 'name': m[1], 'email': m[2]} for m in cursor.fetchall()]
+            
+            # Se não houver na nova tabela, usar coluna antiga (compatibilidade)
+            if not sub_managers and row[4]:
+                cursor.execute('SELECT id, name, email FROM users WHERE id = ?', (row[4],))
+                old_sub = cursor.fetchone()
+                if old_sub:
+                    sub_managers = [{'id': old_sub[0], 'name': old_sub[1], 'email': old_sub[2]}]
+            
             groups.append({
-                'id': row[0],
+                'id': group_id,
                 'name': row[1],
                 'description': row[2] or '',
-                'manager_user_id': row[3],
-                'sub_manager_user_id': row[4],
-                'manager_name': row[5],
-                'manager_email': row[6],
-                'sub_manager_name': row[7],
-                'sub_manager_email': row[8],
-                'user_count': row[9]
+                'managers': managers,
+                'sub_managers': sub_managers,
+                'manager_name': managers[0]['name'] if managers else None,
+                'user_count': row[5]
             })
         
         conn.close()
@@ -5752,7 +6492,7 @@ def api_get_groups_with_managers():
 
 @app.route('/api/admin/groups/<int:group_id>/managers', methods=['PUT'])
 def api_update_group_managers(group_id):
-    """API para atualizar gerente e sub-gerente de um grupo"""
+    """API para atualizar gerentes e sub-gerentes de um grupo (suporta múltiplos)"""
     if 'user_id' not in session:
         return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
     
@@ -5761,8 +6501,18 @@ def api_update_group_managers(group_id):
     
     try:
         data = request.get_json()
-        manager_user_id = data.get('manager_user_id')
-        sub_manager_user_id = data.get('sub_manager_user_id')
+        manager_ids = data.get('manager_user_ids', [])  # Array de IDs
+        sub_manager_ids = data.get('sub_manager_user_ids', [])  # Array de IDs
+        
+        # Garantir que são listas
+        if not isinstance(manager_ids, list):
+            manager_ids = [manager_ids] if manager_ids else []
+        if not isinstance(sub_manager_ids, list):
+            sub_manager_ids = [sub_manager_ids] if sub_manager_ids else []
+        
+        # Remover valores vazios/None
+        manager_ids = [int(id) for id in manager_ids if id]
+        sub_manager_ids = [int(id) for id in sub_manager_ids if id]
         
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -5775,17 +6525,38 @@ def api_update_group_managers(group_id):
             conn.close()
             return jsonify({'success': False, 'message': 'Grupo não encontrado'}), 404
         
-        # Atualizar gerentes
+        # Remover gerentes antigos da nova tabela
+        cursor.execute('DELETE FROM group_managers WHERE group_id = ?', (group_id,))
+        
+        # Inserir novos gerentes principais
+        for user_id in manager_ids:
+            cursor.execute('''
+                INSERT OR IGNORE INTO group_managers (group_id, user_id, manager_type)
+                VALUES (?, ?, 'manager')
+            ''', (group_id, user_id))
+        
+        # Inserir novos sub-gerentes
+        for user_id in sub_manager_ids:
+            cursor.execute('''
+                INSERT OR IGNORE INTO group_managers (group_id, user_id, manager_type)
+                VALUES (?, ?, 'sub_manager')
+            ''', (group_id, user_id))
+        
+        # Atualizar colunas antigas para compatibilidade (primeiro gerente/sub-gerente)
         cursor.execute('''
             UPDATE groups 
             SET manager_user_id = ?, sub_manager_user_id = ?
             WHERE id = ?
-        ''', (manager_user_id, sub_manager_user_id, group_id))
+        ''', (
+            manager_ids[0] if manager_ids else None,
+            sub_manager_ids[0] if sub_manager_ids else None,
+            group_id
+        ))
         
         conn.commit()
         conn.close()
         
-        logger.info(f"Gerentes do grupo {group[0]} (ID: {group_id}) atualizados por usuário {session['user_id']}")
+        logger.info(f"Gerentes do grupo {group[0]} (ID: {group_id}) atualizados: {len(manager_ids)} gerentes, {len(sub_manager_ids)} sub-gerentes")
         
         return jsonify({
             'success': True,
@@ -5794,6 +6565,54 @@ def api_update_group_managers(group_id):
         
     except Exception as e:
         logger.error(f"Erro ao atualizar gerentes do grupo: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Erro interno: {str(e)}'
+        }), 500
+
+@app.route('/api/users/all', methods=['GET'])
+def api_get_all_users():
+    """API para obter todos os usuários ativos do sistema"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+    
+    if not (has_permission(session['user_id'], 'admin_access') or has_permission(session['user_id'], 'manage_users')):
+        return jsonify({'success': False, 'message': 'Sem permissão'}), 403
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                u.id,
+                u.name,
+                u.email,
+                g.name as group_name
+            FROM users u
+            LEFT JOIN groups g ON u.group_id = g.id
+            WHERE u.is_active = 1
+            ORDER BY u.name
+        ''')
+        
+        users = []
+        for row in cursor.fetchall():
+            users.append({
+                'id': row[0],
+                'name': row[1],
+                'email': row[2],
+                'group_name': row[3]
+            })
+        
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'users': users
+        })
+        
+    except Exception as e:
+        logger.error(f"Erro ao buscar todos os usuários: {e}")
         return jsonify({
             'success': False,
             'message': 'Erro interno do sistema'
@@ -6764,64 +7583,78 @@ def get_chat_messages(rnc_id):
         return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
     
     try:
-        conn = sqlite3.connect(DB_PATH)
+        import base64
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
         cursor = conn.cursor()
         
-        # Verificar se a coluna file_path existe
+        # Verificar quais colunas existem
         cursor.execute("PRAGMA table_info(chat_messages)")
         columns = [col[1] for col in cursor.fetchall()]
-        has_file_path = 'file_path' in columns
         
-        if has_file_path:
-            cursor.execute('''
-                SELECT cm.id, cm.rnc_id, cm.user_id, cm.message, cm.message_type, 
-                       cm.created_at, cm.file_path, u.name as user_name, u.department
-                FROM chat_messages cm
-                LEFT JOIN users u ON cm.user_id = u.id
-                WHERE cm.rnc_id = ?
-                ORDER BY cm.created_at ASC
-            ''', (rnc_id,))
-        else:
-            cursor.execute('''
-                SELECT cm.id, cm.rnc_id, cm.user_id, cm.message, cm.message_type, 
-                       cm.created_at, u.name as user_name, u.department
-                FROM chat_messages cm
-                LEFT JOIN users u ON cm.user_id = u.id
-                WHERE cm.rnc_id = ?
-                ORDER BY cm.created_at ASC
-            ''', (rnc_id,))
+        has_file_data = 'file_data' in columns
+        has_file_name = 'file_name' in columns
+        has_viewed_at = 'viewed_at' in columns
         
+        # Construir query dinamicamente
+        base_query = '''
+            SELECT cm.id, cm.rnc_id, cm.user_id, cm.message, cm.message_type, cm.created_at
+        '''
+        
+        if has_viewed_at:
+            base_query += ', cm.viewed_at'
+        if has_file_data:
+            base_query += ', cm.file_data'
+        if has_file_name:
+            base_query += ', cm.file_name'
+        
+        base_query += '''
+            , u.name as user_name, u.department
+            FROM chat_messages cm
+            LEFT JOIN users u ON cm.user_id = u.id
+            WHERE cm.rnc_id = ?
+            ORDER BY cm.created_at ASC
+        '''
+        
+        cursor.execute(base_query, (rnc_id,))
         messages = cursor.fetchall()
         conn.close()
         
         formatted_messages = []
         for msg in messages:
-            if has_file_path:
-                formatted_messages.append({
-                    'id': msg[0],
-                    'rnc_id': msg[1],
-                    'user_id': msg[2],
-                    'message': msg[3],
-                    'message_type': msg[4],
-                    'created_at': msg[5],
-                    'file_path': msg[6],
-                    'user_name': msg[7],
-                    'department': msg[8]
-                })
-            else:
-                formatted_messages.append({
-                    'id': msg[0],
-                    'rnc_id': msg[1],
-                    'user_id': msg[2],
-                    'message': msg[3],
-                    'message_type': msg[4],
-                    'created_at': msg[5],
-                    'file_path': None,
-                    'user_name': msg[6],
-                    'department': msg[7]
-                })
+            idx = 0
+            message_dict = {
+                'id': msg[idx],
+                'rnc_id': msg[idx + 1],
+                'user_id': msg[idx + 2],
+                'message': msg[idx + 3],
+                'message_type': msg[idx + 4],
+                'created_at': msg[idx + 5]
+            }
+            idx = 6
+            
+            if has_viewed_at:
+                message_dict['viewed_at'] = msg[idx]
+                idx += 1
+            
+            file_data_value = None
+            if has_file_data:
+                file_data_value = msg[idx]
+                idx += 1
+            
+            if has_file_name:
+                message_dict['file_name'] = msg[idx]
+                idx += 1
+            
+            message_dict['user_name'] = msg[idx]
+            message_dict['department'] = msg[idx + 1]
+            
+            # Se tem arquivo BLOB, adicionar URL
+            if file_data_value:
+                message_dict['file_url'] = f'/api/chat/file/{message_dict["id"]}'
+            
+            formatted_messages.append(message_dict)
         
-        logger.info(f" API retornando {len(formatted_messages)} mensagens para RNC {rnc_id}")
+        logger.info(f"API retornando {len(formatted_messages)} mensagens para RNC {rnc_id}")
         return jsonify({'success': True, 'messages': formatted_messages})
         
     except Exception as e:
@@ -6840,7 +7673,7 @@ def post_chat_message(rnc_id):
 
     try:
         # VERIFICAR SE A RNC ESTÁ FINALIZADA
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
         cursor = conn.cursor()
         cursor.execute('SELECT status FROM rncs WHERE id = ?', (rnc_id,))
         rnc = cursor.fetchone()
@@ -6860,44 +7693,24 @@ def post_chat_message(rnc_id):
             message_type = request.form.get('message_type', 'text')
             message_id_from_client = request.form.get('message_id')
             
-            # Verificar se há arquivo
-            file_data = None
-            file_path = None
+            # Ler arquivo como BLOB
+            file_blob = None
+            file_name = None
+            
             if 'image' in request.files:
                 file = request.files['image']
                 if file and file.filename:
-                    # Criar pasta de uploads se não existir
-                    import os
-                    from werkzeug.utils import secure_filename
-                    upload_folder = os.path.join(os.path.dirname(__file__), 'static', 'uploads', 'chat_images')
-                    os.makedirs(upload_folder, exist_ok=True)
-                    
-                    # Salvar arquivo com nome único
-                    file_ext = os.path.splitext(file.filename)[1]
-                    unique_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{session['user_id']}{file_ext}"
-                    file_path = os.path.join(upload_folder, unique_filename)
-                    file.save(file_path)
-                    
-                    # Caminho relativo para o banco de dados
-                    file_data = f"/static/uploads/chat_images/{unique_filename}"
+                    file_blob = file.read()
+                    file_name = file.filename
                     message_type = 'image'
             elif 'file' in request.files:
                 file = request.files['file']
                 if file and file.filename:
-                    import os
-                    from werkzeug.utils import secure_filename
-                    upload_folder = os.path.join(os.path.dirname(__file__), 'static', 'uploads', 'chat_files')
-                    os.makedirs(upload_folder, exist_ok=True)
-                    
-                    file_ext = os.path.splitext(file.filename)[1]
-                    unique_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{session['user_id']}_{secure_filename(file.filename)}"
-                    file_path = os.path.join(upload_folder, unique_filename)
-                    file.save(file_path)
-                    
-                    file_data = f"/static/uploads/chat_files/{unique_filename}"
+                    file_blob = file.read()
+                    file_name = file.filename
                     message_type = 'file'
             
-            if not message and not file_data:
+            if not message and not file_blob:
                 return jsonify({'success': False, 'message': 'Mensagem ou arquivo não pode estar vazio'}), 400
                 
         else:
@@ -6906,22 +7719,100 @@ def post_chat_message(rnc_id):
             message = (payload.get('message') or '').strip()
             message_type = 'text'
             message_id_from_client = payload.get('message_id')
-            file_data = None
+            file_blob = None
+            file_name = None
             
             if not message:
                 return jsonify({'success': False, 'message': 'Mensagem não pode estar vazia'}), 400
 
         user_id = session['user_id']
         
-        # Verificar cache para evitar duplicação
+        # Verificar cache para evitar duplicação (e tentar devolver o registro real do BD)
         if message_id_from_client:
             cache_key = f"unique_{message_id_from_client}"
             if cache_key in message_cache:
-                logger.info(f" Mensagem HTTP já processada recentemente, retornando sucesso: {cache_key}")
-                # Retornar sucesso com dados da mensagem (para o cliente adicionar à interface)
+                logger.info(f" Mensagem HTTP já processada recentemente, tentando localizar no BD: {cache_key}")
+                try:
+                    conn_lookup = sqlite3.connect(DB_PATH, timeout=5.0)
+                    cur_lookup = conn_lookup.cursor()
+                    
+                    # Verificar se file_path existe
+                    cur_lookup.execute("PRAGMA table_info(chat_messages)")
+                    lookup_cols = [row[1] for row in cur_lookup.fetchall()]
+                    has_file_path_lookup = 'file_path' in lookup_cols
+                    
+                    if has_file_path_lookup:
+                        cur_lookup.execute(
+                            '''
+                            SELECT cm.id, cm.rnc_id, cm.user_id, cm.message, cm.message_type,
+                                   cm.created_at, cm.file_path, u.name, u.department
+                            FROM chat_messages cm
+                            LEFT JOIN users u ON u.id = cm.user_id
+                            WHERE cm.rnc_id = ? AND cm.user_id = ?
+                              AND (
+                                   (cm.message_type = 'text' AND cm.message = ?)
+                                   OR (cm.message_type IN ('image','file'))
+                              )
+                            ORDER BY cm.id DESC
+                            LIMIT 1
+                            ''', (rnc_id, user_id, message or '')
+                        )
+                    else:
+                        cur_lookup.execute(
+                            '''
+                            SELECT cm.id, cm.rnc_id, cm.user_id, cm.message, cm.message_type,
+                                   cm.created_at, u.name, u.department
+                            FROM chat_messages cm
+                            LEFT JOIN users u ON u.id = cm.user_id
+                            WHERE cm.rnc_id = ? AND cm.user_id = ?
+                              AND cm.message_type = 'text' AND cm.message = ?
+                            ORDER BY cm.id DESC
+                            LIMIT 1
+                            ''', (rnc_id, user_id, message or '')
+                        )
+                    
+                    row = cur_lookup.fetchone()
+                    conn_lookup.close()
+                    
+                    if row:
+                        if has_file_path_lookup:
+                            msg_data = {
+                                'id': row[0],
+                                'rnc_id': row[1],
+                                'user_id': row[2],
+                                'message': row[3] or '',
+                                'message_type': row[4],
+                                'created_at': row[5],
+                                'file_path': row[6],
+                                'user_name': row[7] or 'Usuário',
+                                'department': row[8] or ''
+                            }
+                        else:
+                            msg_data = {
+                                'id': row[0],
+                                'rnc_id': row[1],
+                                'user_id': row[2],
+                                'message': row[3] or '',
+                                'message_type': row[4],
+                                'created_at': row[5],
+                                'file_path': None,
+                                'user_name': row[6] or 'Usuário',
+                                'department': row[7] or ''
+                            }
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': msg_data,
+                            'message_data': msg_data,
+                            'already_processed': True
+                        })
+                except Exception as _e:
+                    logger.error(f" Falha ao buscar mensagem já processada: {_e}")
+                
+                # Sem conseguir localizar no BD, retornar payload mínimo (frontend fará refresh)
                 return jsonify({
-                    'success': True, 
-                    'message': 'Mensagem já processada', 
+                    'success': True,
+                    'message': 'Mensagem já processada',
                     'already_processed': True,
                     'message_data': {
                         'id': message_id_from_client,
@@ -6939,24 +7830,14 @@ def post_chat_message(rnc_id):
             logger.info(f" Processando nova mensagem HTTP: {cache_key}")
 
         # Salvar no banco
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
         cursor = conn.cursor()
         
-        # Verificar se a coluna file_path existe na tabela
-        cursor.execute("PRAGMA table_info(chat_messages)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'file_path' in columns:
-            cursor.execute(
-                'INSERT INTO chat_messages (rnc_id, user_id, message, message_type, file_path) VALUES (?, ?, ?, ?, ?)',
-                (rnc_id, user_id, message or '', message_type, file_data)
-            )
-        else:
-            # Fallback se a coluna não existir
-            cursor.execute(
-                'INSERT INTO chat_messages (rnc_id, user_id, message, message_type) VALUES (?, ?, ?, ?)',
-                (rnc_id, user_id, message or '', message_type)
-            )
+        # Inserir mensagem com BLOB
+        cursor.execute(
+            'INSERT INTO chat_messages (rnc_id, user_id, message, message_type, file_data, file_name) VALUES (?, ?, ?, ?, ?, ?)',
+            (rnc_id, user_id, message or '', message_type, file_blob, file_name)
+        )
         
         message_id = cursor.lastrowid
 
@@ -6966,6 +7847,17 @@ def post_chat_message(rnc_id):
 
         conn.commit()
         conn.close()
+        
+        # Log de auditoria - mensagem de chat
+        try:
+            from services.audit import log_event
+            log_event('CHAT_MESSAGE', f'Enviou mensagem no chat da RNC #{rnc_id}',
+                      target_type='RNC', target_id=rnc_id,
+                      details=f'Tipo: {message_type}',
+                      user_id=user_id, user_name=user_info[0] if user_info else None,
+                      ip_address=request.remote_addr)
+        except Exception:
+            pass
 
         message_data = {
             'id': message_id,
@@ -6973,11 +7865,15 @@ def post_chat_message(rnc_id):
             'user_id': user_id,
             'message': message or '',
             'message_type': message_type,
-            'file_path': file_data,
+            'file_name': file_name,
             'created_at': datetime.now().isoformat(),
             'user_name': user_info[0] if user_info else 'Usuário',
             'department': user_info[1] if user_info else ''
         }
+        
+        # Adicionar file_url se houver arquivo
+        if file_blob:
+            message_data['file_url'] = f'/api/chat/file/{message_id}'
 
         # Notificar em tempo real para os OUTROS usuários
         # O remetente já adiciona a mensagem via resposta HTTP
@@ -7049,8 +7945,9 @@ def post_chat_message(rnc_id):
         # CORREÇÃO: Retornar dados da mensagem com chave correta
         return jsonify({
             'success': True, 
-            'message': message_data,  # Dados completos da mensagem
-            'text': 'Mensagem enviada com sucesso'  # Texto de confirmação
+            'message': message_data,  # Mantém compatibilidade
+            'message_data': message_data,  # Nova chave para clareza
+            'text': 'Mensagem enviada com sucesso'
         })
 
     except Exception as e:
@@ -7163,6 +8060,44 @@ def get_unread_notifications():
         logger.error(f"Erro ao buscar notificações: {e}")
         return jsonify({'success': False, 'message': f'Erro interno: {str(e)}'}), 500
 
+@app.route('/api/chat/file/<int:message_id>')
+def serve_chat_file(message_id):
+    """Servir arquivo/imagem do banco de dados (BLOB)"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        from flask import send_file
+        import io
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT file_data, file_name, message_type FROM chat_messages WHERE id = ?', (message_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row or not row[0]:
+            return jsonify({'success': False, 'message': 'Arquivo não encontrado'}), 404
+        
+        file_data, file_name, message_type = row
+        
+        # Determinar MIME type
+        import mimetypes
+        mime_type = mimetypes.guess_type(file_name)[0] if file_name else 'application/octet-stream'
+        
+        if message_type == 'image' and not mime_type.startswith('image/'):
+            mime_type = 'image/jpeg'
+        
+        return send_file(
+            io.BytesIO(file_data),
+            mimetype=mime_type,
+            as_attachment=False,
+            download_name=file_name
+        )
+    except Exception as e:
+        logger.error(f"Erro ao servir arquivo: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/notifications/mark-read', methods=['POST'])
 def mark_notifications_read():
     """API para marcar notificações como lidas"""
@@ -7213,68 +8148,51 @@ def mark_messages_viewed():
         return jsonify({'success': False, 'message': 'RNC ID não fornecido'}), 400
     
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
         cursor = conn.cursor()
         
-        # Verificar se as tabelas e colunas existem
-        cursor.execute("PRAGMA table_info(message_views)")
-        message_views_cols = [row[1] for row in cursor.fetchall()]
-        
+        # Verificar colunas da tabela chat_messages
         cursor.execute("PRAGMA table_info(chat_messages)")
         chat_messages_cols = [row[1] for row in cursor.fetchall()]
         
-        # Marcar mensagens como visualizadas na tabela message_views
-        if 'user_id' in message_views_cols and 'rnc_id' in message_views_cols:
-            cursor.execute('''
-                INSERT OR REPLACE INTO message_views (user_id, rnc_id, last_viewed_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-            ''', (user_id, rnc_id))
-        
         marked_count = 0
         
-        # Marcar mensagens individuais como visualizadas (estilo WhatsApp)
-        # Apenas se a coluna viewed_at existir
-        if 'viewed_at' in chat_messages_cols and 'user_id' in chat_messages_cols:
-            cursor.execute('''
-                UPDATE chat_messages 
-                SET viewed_at = CURRENT_TIMESTAMP 
-                WHERE rnc_id = ? 
-                AND user_id != ? 
-                AND viewed_at IS NULL
-            ''', (rnc_id, user_id))
-            marked_count = cursor.rowcount
-        else:
-            logger.warning(f" Coluna viewed_at não existe em chat_messages. Colunas disponíveis: {chat_messages_cols}")
-            # Garantir que a coluna seja adicionada usando a conexão existente
-            ensure_chat_viewed_at_column(conn)
-            marked_count = 0
-            
-            # Tentar novamente após adicionar a coluna
-            try:
-                cursor.execute('''
-                    UPDATE chat_messages 
-                    SET viewed_at = CURRENT_TIMESTAMP 
-                    WHERE rnc_id = ? 
-                    AND user_id != ? 
-                    AND viewed_at IS NULL
-                ''', (rnc_id, user_id))
-                marked_count = cursor.rowcount
-                logger.info(" Conseguiu marcar mensagens após adicionar coluna viewed_at")
-            except Exception as retry_error:
-                logger.error(f" Ainda não conseguiu marcar mensagens após adicionar coluna: {retry_error}")
-                marked_count = 0
+        # Adicionar coluna viewed_at se não existir
+        if 'viewed_at' not in chat_messages_cols:
+            logger.info("Adicionando coluna viewed_at em chat_messages")
+            cursor.execute('ALTER TABLE chat_messages ADD COLUMN viewed_at TIMESTAMP')
+            conn.commit()
         
-        # Marcar notificações relacionadas como lidas
+        # Marcar mensagens como visualizadas (apenas mensagens de outros usuários)
         cursor.execute('''
-            UPDATE notifications 
-            SET is_read = 1 
-            WHERE user_id = ? AND rnc_id = ? AND type = 'new_message'
-        ''', (user_id, rnc_id))
+            UPDATE chat_messages
+            SET viewed_at = CURRENT_TIMESTAMP
+            WHERE rnc_id = ?
+              AND user_id != ?
+              AND viewed_at IS NULL
+        ''', (rnc_id, user_id))
+        marked_count = cursor.rowcount
+        
+        # Marcar notificações relacionadas como lidas (com segurança)
+        try:
+            cursor.execute("PRAGMA table_info(notifications)")
+            notif_cols = [row[1] for row in cursor.fetchall()]
+            
+            if 'rnc_id' in notif_cols and 'type' in notif_cols:
+                cursor.execute('''
+                    UPDATE notifications 
+                    SET is_read = 1 
+                    WHERE user_id = ? AND rnc_id = ? AND type = 'new_message'
+                ''', (user_id, rnc_id))
+            else:
+                logger.warning("Tabela notifications sem colunas rnc_id/type")
+        except Exception as e:
+            logger.warning(f"Erro ao atualizar notificações: {e}")
         
         conn.commit()
         conn.close()
         
-        logger.info(f" {marked_count} mensagens do RNC {rnc_id} marcadas como visualizadas (viewed_at) pelo usuário {user_id}")
+        logger.info(f"{marked_count} mensagens do RNC {rnc_id} marcadas como visualizadas pelo usuário {user_id}")
         
         return jsonify({
             'success': True, 
@@ -7605,8 +8523,8 @@ def handle_rnc_chat_message(data):
         
         logger.info(f" Dados validados - Processando mensagem do RNC {rnc_id} do usuário {user_id}")
         
-        # Salvar mensagem no banco
-        conn = sqlite3.connect(DB_PATH)
+        # Salvar mensagem no banco com timeout maior
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -7627,6 +8545,10 @@ def handle_rnc_chat_message(data):
         
         conn.commit()
         conn.close()
+        
+        # ENVIAR CONFIRMAÇÃO IMEDIATA para o remetente (antes de broadcast/notificações)
+        emit('message_sent', {'success': True, 'message_id': message_id})
+        logger.info(f"Confirmação message_sent enviada para o remetente com message_id={message_id}")
         
         # Preparar dados da mensagem
         message_data = {
@@ -7675,9 +8597,6 @@ def handle_rnc_chat_message(data):
         logger.info(f" Evento: 'new_message', Room: '{room_name}', Broadcast: True")
         logger.info(f" Usuários na sala: {room_users}")
         logger.info(f" ========================================")
-        
-        # Enviar confirmação de sucesso para o remetente
-        emit('message_sent', {'success': True, 'message_id': message_id})
         
         # Criar notificações usando o sistema melhorado de notificações
         try:
@@ -8741,6 +9660,1184 @@ def api_valores_hora_delete(codigo):
     except Exception as e:
         print(f"Erro ao deletar valor/hora: {e}")
         return jsonify({'success': False, 'message': 'Erro ao deletar'}), 500
+
+
+# ============================================================================
+# ENDPOINTS DE R.O (RELATÓRIO DE OCORRÊNCIA)
+# ============================================================================
+
+@app.route('/api/ro/list', methods=['GET'])
+def list_ros():
+    """Lista todos os R.O ativos"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                r.*,
+                u.name as creator_name,
+                u.department as creator_department,
+                au.name as assigned_user_name
+            FROM ros r
+            LEFT JOIN users u ON r.user_id = u.id
+            LEFT JOIN users au ON r.assigned_user_id = au.id
+            WHERE r.is_deleted = 0 AND r.finalized_at IS NULL
+            ORDER BY r.created_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        return_db_connection(conn)
+        
+        ros = []
+        for row in rows:
+            ro_dict = dict(row)
+            ros.append(ro_dict)
+        
+        return jsonify({'success': True, 'ros': ros})
+    except Exception as e:
+        logger.error(f"Erro ao listar R.O: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ro/finalized', methods=['GET'])
+def list_finalized_ros():
+    """Lista R.O finalizados"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Não autenticado'}), 401
+    
+    try:
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', 50))
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                r.*,
+                u.name as creator_name,
+                u.department as creator_department
+            FROM ros r
+            LEFT JOIN users u ON r.user_id = u.id
+            WHERE r.is_deleted = 0 AND r.finalized_at IS NOT NULL
+            ORDER BY r.finalized_at DESC
+            LIMIT ? OFFSET ?
+        ''', (limit, offset))
+        
+        rows = cursor.fetchall()
+        
+        cursor.execute('''
+            SELECT COUNT(*) as total 
+            FROM ros 
+            WHERE is_deleted = 0 AND finalized_at IS NOT NULL
+        ''')
+        total = cursor.fetchone()['total']
+        
+        return_db_connection(conn)
+        
+        ros = [dict(row) for row in rows]
+        
+        return jsonify({
+            'success': True,
+            'ros': ros,
+            'total': total,
+            'hasMore': (offset + limit) < total
+        })
+    except Exception as e:
+        logger.error(f"Erro ao listar R.O finalizados: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ro/create', methods=['POST'])
+def create_ro():
+    """Cria um novo R.O"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Não autenticado'}), 401
+    
+    try:
+        data = request.get_json()
+        user_id = session.get('user_id')
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT MAX(CAST(ro_number AS INTEGER)) as max_num FROM ros')
+        result = cursor.fetchone()
+        
+        if result and result[0] is not None:
+            max_num = result[0]
+        else:
+            max_num = 19
+        
+        next_number = max_num + 1
+        
+        cursor.execute('''
+            INSERT INTO ros (
+                ro_number, title, description, equipment, client,
+                priority, status, user_id, instruction_retrabalho, cause_ro,
+                drawing_number, revision, conjunto, description_drawing,
+                position, modelo, material, quantity, cv, mp,
+                price, price_note, area_responsavel, ass_responsavel,
+                inspetor, responsavel, signature_inspection2_name,
+                setor, purchase_order, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (
+            str(next_number),
+            data.get('title'),
+            data.get('description'),
+            data.get('equipment'),
+            data.get('client'),
+            data.get('priority', 'Média'),
+            'Pendente',
+            user_id,
+            data.get('instruction_retrabalho'),
+            data.get('cause_ro'),
+            data.get('drawing_number'),
+            data.get('revision'),
+            data.get('conjunto'),
+            data.get('description_drawing'),
+            data.get('position'),
+            data.get('modelo'),
+            data.get('material'),
+            data.get('quantity'),
+            data.get('cv'),
+            data.get('mp'),
+            data.get('price'),
+            data.get('price_note'),
+            data.get('area_responsavel'),
+            data.get('ass_responsavel'),
+            data.get('inspetor'),
+            data.get('responsavel'),
+            data.get('signature_inspection2_name'),
+            data.get('setor'),
+            data.get('purchase_order')
+        ))
+        
+        ro_id = cursor.lastrowid
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"R.O {next_number} criado pelo usuário {user_id}")
+        
+        return jsonify({
+            'success': True,
+            'ro_id': ro_id,
+            'ro_number': str(next_number)
+        })
+    except Exception as e:
+        logger.error(f"Erro ao criar R.O: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ro/<int:ro_id>/edit', methods=['PUT'])
+def edit_ro_api(ro_id):
+    """Atualiza um R.O existente"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        data = request.get_json()
+        user_id = session.get('user_id')
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se R.O existe
+        cursor.execute('SELECT id FROM ros WHERE id = ?', (ro_id,))
+        if not cursor.fetchone():
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'R.O não encontrado'}), 404
+        
+        cursor.execute('''
+            UPDATE ros SET
+                title = ?,
+                description = ?,
+                equipment = ?,
+                client = ?,
+                instruction_retrabalho = ?,
+                cause_ro = ?,
+                drawing_number = ?,
+                revision = ?,
+                conjunto = ?,
+                description_drawing = ?,
+                position = ?,
+                modelo = ?,
+                material = ?,
+                quantity = ?,
+                cv = ?,
+                mp = ?,
+                price = ?,
+                price_note = ?,
+                area_responsavel = ?,
+                ass_responsavel = ?,
+                inspetor = ?,
+                responsavel = ?,
+                signature_inspection2_name = ?,
+                setor = ?,
+                purchase_order = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (
+            data.get('title'),
+            data.get('description'),
+            data.get('equipment'),
+            data.get('client'),
+            data.get('instruction_retrabalho'),
+            data.get('cause_ro'),
+            data.get('drawing_number'),
+            data.get('revision'),
+            data.get('conjunto'),
+            data.get('description_drawing'),
+            data.get('position'),
+            data.get('modelo'),
+            data.get('material'),
+            data.get('quantity'),
+            data.get('cv'),
+            data.get('mp'),
+            data.get('price'),
+            data.get('price_note'),
+            data.get('area_responsavel'),
+            data.get('ass_responsavel'),
+            data.get('inspetor'),
+            data.get('responsavel'),
+            data.get('signature_inspection2_name'),
+            data.get('setor'),
+            data.get('purchase_order'),
+            ro_id
+        ))
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"R.O ID {ro_id} atualizado pelo usuário {user_id}")
+        
+        return jsonify({
+            'success': True,
+            'ro_id': ro_id,
+            'message': 'R.O atualizado com sucesso'
+        })
+    except Exception as e:
+        logger.error(f"Erro ao editar R.O {ro_id}: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/rnc/<int:rnc_id>/convert-to-ro', methods=['POST'])
+def convert_rnc_to_ro(rnc_id):
+    """Converte uma RNC em R.O"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Não autenticado'}), 401
+    
+    try:
+        user_id = session.get('user_id')
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Buscar dados da RNC
+        cursor.execute('SELECT * FROM rncs WHERE id = ?', (rnc_id,))
+        rnc = cursor.fetchone()
+        
+        if not rnc:
+            return_db_connection(conn)
+            return jsonify({'success': False, 'error': 'RNC não encontrada'}), 404
+        
+        # Gerar próximo número de R.O
+        cursor.execute('SELECT MAX(CAST(ro_number AS INTEGER)) as max_num FROM ros')
+        result = cursor.fetchone()
+        next_number = (result[0] if result and result[0] else 19) + 1
+        
+        # Criar R.O com dados da RNC (causa_ro fica em branco)
+        cursor.execute('''
+            INSERT INTO ros (
+                ro_number, title, description, equipment, client,
+                priority, status, user_id, creator_name, assigned_user_id,
+                drawing_number, revision, conj, description_drawing,
+                model, material, quantity, price, assigned_group_id,
+                causador_user_id, instruction_retrabalho, cause_ro,
+                price_note, area_responsavel, ass_responsavel,
+                inspetor, responsavel, signature_inspection2_name,
+                setor, purchase_order, position, cv, mp, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (
+            str(next_number),
+            rnc['title'] if 'title' in rnc.keys() else None,
+            rnc['description'] if 'description' in rnc.keys() else None,
+            rnc['equipment'] if 'equipment' in rnc.keys() else None,
+            rnc['client'] if 'client' in rnc.keys() else None,
+            rnc['priority'] if 'priority' in rnc.keys() else 'Média',
+            'Pendente',
+            user_id,
+            session.get('username', 'Desconhecido'),
+            rnc['assigned_user_id'] if 'assigned_user_id' in rnc.keys() else None,
+            rnc['drawing'] if 'drawing' in rnc.keys() else None,
+            rnc['revision'] if 'revision' in rnc.keys() else None,
+            rnc['conjunto'] if 'conjunto' in rnc.keys() else None,
+            rnc['description_drawing'] if 'description_drawing' in rnc.keys() else None,
+            rnc['modelo'] if 'modelo' in rnc.keys() else None,
+            rnc['material'] if 'material' in rnc.keys() else None,
+            rnc['quantity'] if 'quantity' in rnc.keys() else None,
+            rnc['price'] if 'price' in rnc.keys() else None,
+            rnc['assigned_group_id'] if 'assigned_group_id' in rnc.keys() else None,
+            rnc['causador_user_id'] if 'causador_user_id' in rnc.keys() else None,
+            rnc['instruction_retrabalho'] if 'instruction_retrabalho' in rnc.keys() else None,
+            None,
+            rnc['price_note'] if 'price_note' in rnc.keys() else None,
+            rnc['area_responsavel'] if 'area_responsavel' in rnc.keys() else None,
+            rnc['ass_responsavel'] if 'ass_responsavel' in rnc.keys() else None,
+            rnc['inspetor'] if 'inspetor' in rnc.keys() else None,
+            rnc['responsavel'] if 'responsavel' in rnc.keys() else None,
+            rnc['signature_inspection2_name'] if 'signature_inspection2_name' in rnc.keys() else None,
+            rnc['setor'] if 'setor' in rnc.keys() else None,
+            rnc['purchase_order'] if 'purchase_order' in rnc.keys() else None,
+            rnc['position'] if 'position' in rnc.keys() else None,
+            rnc['cv'] if 'cv' in rnc.keys() else None,
+            rnc['mp'] if 'mp' in rnc.keys() else None
+        ))
+        
+        ro_id = cursor.lastrowid
+        
+        # Deletar a RNC
+        cursor.execute('UPDATE rncs SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP WHERE id = ?', (rnc_id,))
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"RNC {rnc_id} convertida para R.O {next_number} pelo usuário {user_id}")
+        
+        return jsonify({
+            'success': True,
+            'ro_id': ro_id,
+            'ro_number': str(next_number)
+        })
+    except Exception as e:
+        logger.error(f"Erro ao converter RNC para R.O: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ro/<int:ro_id>', methods=['GET'])
+def get_ro(ro_id):
+    """Retorna dados de um R.O específico"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                r.*,
+                u.name as creator_name,
+                u.department as creator_department
+            FROM ros r
+            LEFT JOIN users u ON r.user_id = u.id
+            WHERE r.id = ?
+        ''', (ro_id,))
+        
+        row = cursor.fetchone()
+        return_db_connection(conn)
+        
+        if not row:
+            return jsonify({'success': False, 'error': 'R.O não encontrado'}), 404
+        
+        return jsonify({'success': True, 'ro': dict(row)})
+    except Exception as e:
+        logger.error(f"Erro ao buscar R.O: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ro/<int:ro_id>/update', methods=['PUT'])
+def update_ro(ro_id):
+    """Atualiza um R.O"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Não autenticado'}), 401
+    
+    try:
+        data = request.get_json()
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        allowed_fields = [
+            'title', 'description', 'equipment', 'client', 'priority',
+            'status', 'price', 'disposition_usar', 'disposition_retrabalhar',
+            'disposition_rejeitar', 'disposition_sucata', 
+            'disposition_devolver_estoque', 'disposition_devolver_fornecedor',
+            'inspection_aprovado', 'inspection_reprovado', 'inspection_ver_ro',
+            'signature_inspection_date', 'signature_engineering_date',
+            'signature_inspection2_date', 'signature_inspection_name',
+            'signature_engineering_name', 'signature_inspection2_name',
+            'ass_responsavel'
+        ]
+        
+        updates = []
+        values = []
+        
+        for field in allowed_fields:
+            if field in data:
+                updates.append(f"{field} = ?")
+                values.append(data[field])
+        
+        if updates:
+            values.append(ro_id)
+            sql = f"UPDATE ros SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+            cursor.execute(sql, values)
+            conn.commit()
+        
+        return_db_connection(conn)
+        
+        logger.info(f"R.O {ro_id} atualizado")
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Erro ao atualizar R.O: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ro/<int:ro_id>/finalize', methods=['POST'])
+def finalize_ro(ro_id):
+    """Finaliza um R.O"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE ros 
+            SET status = 'Finalizado', 
+                finalized_at = CURRENT_TIMESTAMP 
+            WHERE id = ?
+        ''', (ro_id,))
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"R.O {ro_id} finalizado")
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Erro ao finalizar R.O: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ro/<int:ro_id>/delete', methods=['DELETE'])
+def delete_ro(ro_id):
+    """Deleta R.O permanentemente do banco de dados"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Não autenticado'}), 401
+    
+    user_id = session.get('user_id')
+    
+    if not has_permission(user_id, 'delete_rncs'):
+        return jsonify({'success': False, 'error': 'Sem permissão para deletar R.O'}), 403
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM ros WHERE id = ?', (ro_id,))
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"R.O {ro_id} deletado permanentemente por usuário {user_id}")
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Erro ao deletar R.O: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ro/<int:ro_id>/responder', methods=['POST'])
+def api_responder_ro(ro_id):
+    """API para responder R.O"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Não autenticado'}), 401
+    
+    try:
+        data = request.get_json()
+        descricao = data.get('descricao', '').strip()
+        causa = data.get('causa', '').strip()
+        instrucao = data.get('instrucao', '').strip()
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se é admin
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session['user_id'],))
+        user_row = cursor.fetchone()
+        is_admin = user_row and user_row[0] == 'admin'
+        
+        # Validação conforme permissão:
+        # Admin: pode editar descricao e instrucao
+        # Usuário comum: pode editar apenas causa
+        if is_admin:
+            if not descricao or not instrucao:
+                return_db_connection(conn)
+                return jsonify({'success': False, 'error': 'Descrição e Instrução são obrigatórios'}), 400
+            # Admin atualiza descrição e instrução
+            cursor.execute('''
+                UPDATE ros 
+                SET description = ?,
+                    instruction_retrabalho = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (descricao, instrucao, ro_id))
+        else:
+            if not causa:
+                return_db_connection(conn)
+                return jsonify({'success': False, 'error': 'Causa é obrigatória'}), 400
+            # Usuário comum atualiza apenas causa
+            cursor.execute('''
+                UPDATE ros 
+                SET cause_ro = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (causa, ro_id))
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"R.O {ro_id} respondido por usuário {session['user_id']} (admin={is_admin})")
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        logger.error(f"Erro ao responder R.O: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ==================== ROTAS DE ATAS DE REUNIÃO ====================
+
+@app.route('/form_ata')
+def form_ata():
+    """Página de formulário para criar nova ata de reunião"""
+    if 'user_id' not in session:
+        return redirect(url_for('auth.login'))
+    return render_template('form_ata.html')
+
+@app.post('/api/ata/create')
+def api_ata_create():
+    """Criar nova ata de reunião (upload PDF + data)"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        data_reuniao = request.form.get('data_reuniao')
+        pdf_file = request.files.get('pdf_file')
+        
+        if not data_reuniao or not pdf_file:
+            return jsonify({'success': False, 'message': 'Data e PDF são obrigatórios'}), 400
+        
+        if not pdf_file.filename.lower().endswith('.pdf'):
+            return jsonify({'success': False, 'message': 'Apenas arquivos PDF são permitidos'}), 400
+        
+        pdf_data = pdf_file.read()
+        
+        if len(pdf_data) > 10 * 1024 * 1024:
+            return jsonify({'success': False, 'message': 'PDF muito grande (máximo 10MB)'}), 400
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO atas (data_reuniao, pdf_filename, pdf_data, user_id)
+            VALUES (?, ?, ?, ?)
+        ''', (data_reuniao, pdf_file.filename, pdf_data, session['user_id']))
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"Ata de {data_reuniao} criada por usuário {session['user_id']}")
+        return jsonify({'success': True, 'message': 'Ata criada com sucesso'})
+        
+    except Exception as e:
+        logger.error(f"Erro ao criar ata: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.get('/api/atas/list')
+def api_atas_list():
+    """Listar todas as atas de reunião"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT a.id, a.data_reuniao, a.pdf_filename, a.created_at, u.name as criador
+            FROM atas a
+            LEFT JOIN users u ON a.user_id = u.id
+            ORDER BY a.data_reuniao DESC, a.created_at DESC
+        ''')
+        
+        atas = []
+        for row in cursor.fetchall():
+            atas.append({
+                'id': row[0],
+                'data_reuniao': row[1],
+                'pdf_filename': row[2],
+                'created_at': row[3],
+                'criador': row[4]
+            })
+        
+        return_db_connection(conn)
+        return jsonify({'success': True, 'atas': atas})
+        
+    except Exception as e:
+        logger.error(f"Erro ao listar atas: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.get('/api/ata/<int:ata_id>/download')
+def api_ata_download(ata_id):
+    """Baixar PDF da ata"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT pdf_filename, pdf_data FROM atas WHERE id = ?', (ata_id,))
+        row = cursor.fetchone()
+        return_db_connection(conn)
+        
+        if not row:
+            return jsonify({'success': False, 'message': 'Ata não encontrada'}), 404
+        
+        filename, pdf_data = row
+        response = make_response(pdf_data)
+        response.headers['Content-Type'] = 'application/pdf'
+        response.headers['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
+        
+    except Exception as e:
+        logger.error(f"Erro ao baixar ata: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.delete('/api/ata/<int:ata_id>/delete')
+def api_ata_delete(ata_id):
+    """Excluir ata de reunião (apenas admin)"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session['user_id'],))
+        user = cursor.fetchone()
+        
+        if not user or user[0] != 'admin':
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Apenas administradores podem excluir atas'}), 403
+        
+        cursor.execute('DELETE FROM atas WHERE id = ?', (ata_id,))
+        
+        if cursor.rowcount == 0:
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Ata não encontrada'}), 404
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"Ata {ata_id} excluída por administrador {session['user_id']}")
+        return jsonify({'success': True, 'message': 'Ata excluída com sucesso'})
+        
+    except Exception as e:
+        logger.error(f"Erro ao excluir ata: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ================================================================================
+# ROTAS DE GARANTIAS
+# ================================================================================
+
+@app.get('/api/garantias/list')
+def api_garantias_list():
+    """Listar todas as garantias (exceto deletadas)"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT g.*, u.name as creator_name
+            FROM garantias g
+            LEFT JOIN users u ON g.user_id = u.id
+            WHERE g.is_deleted = 0 OR g.is_deleted IS NULL
+            ORDER BY g.id DESC
+        ''')
+        
+        columns = [description[0] for description in cursor.description]
+        garantias = []
+        for row in cursor.fetchall():
+            garantia = dict(zip(columns, row))
+            garantias.append(garantia)
+        
+        return_db_connection(conn)
+        return jsonify({'success': True, 'garantias': garantias})
+        
+    except Exception as e:
+        logger.error(f"Erro ao listar garantias: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.get('/api/garantias/trash')
+def api_garantias_trash():
+    """Listar garantias na lixeira - apenas admin"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se é admin
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session.get('user_id'),))
+        user_row = cursor.fetchone()
+        if not user_row or user_row[0] != 'admin':
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Acesso negado'}), 403
+        
+        cursor.execute('''
+            SELECT g.*, u.name as creator_name
+            FROM garantias g
+            LEFT JOIN users u ON g.user_id = u.id
+            WHERE g.is_deleted = 1
+            ORDER BY g.deleted_at DESC
+        ''')
+        
+        columns = [description[0] for description in cursor.description]
+        garantias = []
+        for row in cursor.fetchall():
+            garantia = dict(zip(columns, row))
+            garantias.append(garantia)
+        
+        return_db_connection(conn)
+        return jsonify({'success': True, 'garantias': garantias})
+        
+    except Exception as e:
+        logger.error(f"Erro ao listar lixeira: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.get('/api/garantia/<int:garantia_id>')
+def api_garantia_get(garantia_id):
+    """Obter detalhes de uma garantia"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT g.*, u.name as creator_name
+            FROM garantias g
+            LEFT JOIN users u ON g.user_id = u.id
+            WHERE g.id = ?
+        ''', (garantia_id,))
+        
+        row = cursor.fetchone()
+        if not row:
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Garantia não encontrada'}), 404
+        
+        columns = [description[0] for description in cursor.description]
+        garantia = dict(zip(columns, row))
+        
+        return_db_connection(conn)
+        return jsonify({'success': True, 'garantia': garantia})
+        
+    except Exception as e:
+        logger.error(f"Erro ao obter garantia: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/form_garantia', methods=['GET', 'POST'])
+def form_garantia():
+    """Formulário de criação/edição de garantia - apenas admin"""
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    # Verificar se é admin
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session.get('user_id'),))
+        user_row = cursor.fetchone()
+        is_admin = user_row[0] == 'admin' if user_row else False
+        return_db_connection(conn)
+        
+        if not is_admin:
+            flash('Acesso negado. Apenas administradores podem criar garantias.', 'error')
+            return redirect(url_for('dashboard'))
+    except Exception as e:
+        logger.error(f"Erro ao verificar permissão: {e}")
+        return redirect(url_for('dashboard'))
+    
+    if request.method == 'POST':
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Gerar número da garantia (sequencial, reusa números excluídos)
+            # Apenas considerar garantias não deletadas para evitar pular números removidos
+            cursor.execute("SELECT CAST(garantia_number AS INTEGER) FROM garantias WHERE (is_deleted = 0 OR is_deleted IS NULL) ORDER BY CAST(garantia_number AS INTEGER)")
+            existing_nums = [row[0] for row in cursor.fetchall() if row[0] is not None]
+            # Convert fetched values to integers (safety) and remove None
+            existing_nums = [int(n) for n in existing_nums]
+            next_num = 1
+            for num in existing_nums:
+                if num == next_num:
+                    next_num += 1
+                elif num > next_num:
+                    break
+            garantia_number = f"{next_num:05d}"
+            
+            # Obter dados do formulário
+            cv = request.form.get('cv', '')
+            cv_date = request.form.get('cv_date', '')
+            client = request.form.get('client', '')
+            equipment = request.form.get('equipment', '')
+            quantity = request.form.get('quantity', '')
+            item_fornecido = request.form.get('item_fornecido', '')
+            setor_causador = request.form.get('setor_causador', '')
+            sector = request.form.get('sector', '')  # causador (usuário)
+            description = request.form.get('description', '')
+            priority = request.form.get('priority', 'Média')
+            area_responsavel = request.form.get('area_responsavel', '')
+            
+            # Título automático baseado no item
+            title = f"Garantia - {item_fornecido}" if item_fornecido else f"Garantia n°{garantia_number}"
+            
+            cursor.execute('''
+                INSERT INTO garantias (
+                    garantia_number, title, description, equipment, client,
+                    priority, status, user_id, sector, area_responsavel, 
+                    cv, quantity, item_fornecido, cv_date, setor_causador, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'Pendente', ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+            ''', (garantia_number, title, description, equipment, client,
+                  priority, session['user_id'], sector, area_responsavel,
+                  cv, quantity, item_fornecido, cv_date, setor_causador))
+            
+            conn.commit()
+            garantia_id = cursor.lastrowid
+            return_db_connection(conn)
+            
+            logger.info(f"Garantia {garantia_number} criada por usuário {session['user_id']}")
+            return redirect(url_for('view_garantia', garantia_id=garantia_id))
+            
+        except Exception as e:
+            logger.error(f"Erro ao criar garantia: {e}")
+            return render_template('error.html', message=str(e))
+    
+    # GET - Mostrar formulário
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Obter áreas/setores para dropdown
+        cursor.execute("SELECT id, name FROM areas ORDER BY name")
+        areas = cursor.fetchall()
+        
+        # Obter clientes cadastrados
+        cursor.execute("SELECT name FROM clients ORDER BY name")
+        clients = [row[0] for row in cursor.fetchall()]
+        
+        # Obter grupos (setores) para dropdown
+        cursor.execute("SELECT id, name FROM groups ORDER BY name")
+        groups = cursor.fetchall()
+        
+        return_db_connection(conn)
+        return render_template('form_garantia.html', areas=areas, clients=clients, groups=groups)
+        
+    except Exception as e:
+        logger.error(f"Erro ao carregar form garantia: {e}")
+        return render_template('error.html', message=str(e))
+
+
+@app.get('/garantia/<int:garantia_id>')
+def view_garantia(garantia_id):
+    """Visualizar garantia"""
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se é admin
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session.get('user_id'),))
+        user_row = cursor.fetchone()
+        is_admin = user_row[0] == 'admin' if user_row else False
+        
+        cursor.execute('''
+            SELECT g.*, u.name as creator_name
+            FROM garantias g
+            LEFT JOIN users u ON g.user_id = u.id
+            WHERE g.id = ?
+        ''', (garantia_id,))
+        
+        row = cursor.fetchone()
+        if not row:
+            return_db_connection(conn)
+            return render_template('error.html', message='Garantia não encontrada')
+        
+        columns = [description[0] for description in cursor.description]
+        garantia = dict(zip(columns, row))
+        
+        return_db_connection(conn)
+        return render_template('view_garantia.html', garantia=garantia, is_admin=is_admin)
+        
+    except Exception as e:
+        logger.error(f"Erro ao visualizar garantia: {e}")
+        return render_template('error.html', message=str(e))
+
+
+@app.post('/api/garantia/<int:garantia_id>/status')
+def api_garantia_update_status(garantia_id):
+    """Atualizar status de uma garantia"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        data = request.get_json()
+        new_status = data.get('status')
+        
+        if not new_status:
+            return jsonify({'success': False, 'message': 'Status não informado'}), 400
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE garantias SET status = ?, updated_at = datetime('now', 'localtime')
+            WHERE id = ?
+        ''', (new_status, garantia_id))
+        
+        if cursor.rowcount == 0:
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Garantia não encontrada'}), 404
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"Garantia {garantia_id} status atualizado para {new_status}")
+        return jsonify({'success': True, 'message': 'Status atualizado'})
+        
+    except Exception as e:
+        logger.error(f"Erro ao atualizar status garantia: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.delete('/api/garantia/<int:garantia_id>/delete')
+def api_garantia_delete(garantia_id):
+    """Mover garantia para lixeira (soft delete) - apenas admin"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se é admin
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session.get('user_id'),))
+        user_row = cursor.fetchone()
+        if not user_row or user_row[0] != 'admin':
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Acesso negado. Apenas administradores podem excluir garantias.'}), 403
+        
+        # Soft delete - mover para lixeira
+        cursor.execute('''
+            UPDATE garantias 
+            SET is_deleted = 1, deleted_at = datetime('now', 'localtime')
+            WHERE id = ?
+        ''', (garantia_id,))
+        
+        if cursor.rowcount == 0:
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Garantia não encontrada'}), 404
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"Garantia {garantia_id} movida para lixeira por admin {session['user_id']}")
+        return jsonify({'success': True, 'message': 'Garantia movida para lixeira'})
+        
+    except Exception as e:
+        logger.error(f"Erro ao excluir garantia: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.post('/api/garantia/<int:garantia_id>/restore')
+def api_garantia_restore(garantia_id):
+    """Restaurar garantia da lixeira - apenas admin"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se é admin
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session.get('user_id'),))
+        user_row = cursor.fetchone()
+        if not user_row or user_row[0] != 'admin':
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Acesso negado. Apenas administradores podem restaurar garantias.'}), 403
+        
+        cursor.execute('''
+            UPDATE garantias 
+            SET is_deleted = 0, deleted_at = NULL
+            WHERE id = ?
+        ''', (garantia_id,))
+        
+        if cursor.rowcount == 0:
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Garantia não encontrada'}), 404
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"Garantia {garantia_id} restaurada da lixeira por admin {session['user_id']}")
+        return jsonify({'success': True, 'message': 'Garantia restaurada'})
+        
+    except Exception as e:
+        logger.error(f"Erro ao restaurar garantia: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.delete('/api/garantia/<int:garantia_id>/delete-permanent')
+def api_garantia_delete_permanent(garantia_id):
+    """Excluir garantia permanentemente - apenas admin"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Não autenticado'}), 401
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se é admin
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session.get('user_id'),))
+        user_row = cursor.fetchone()
+        if not user_row or user_row[0] != 'admin':
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Acesso negado.'}), 403
+        
+        cursor.execute('DELETE FROM garantias WHERE id = ?', (garantia_id,))
+        
+        if cursor.rowcount == 0:
+            return_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Garantia não encontrada'}), 404
+        
+        conn.commit()
+        return_db_connection(conn)
+        
+        logger.info(f"Garantia {garantia_id} excluída permanentemente por admin {session['user_id']}")
+        return jsonify({'success': True, 'message': 'Garantia excluída permanentemente'})
+        
+    except Exception as e:
+        logger.error(f"Erro ao excluir garantia: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/edit_garantia/<int:garantia_id>', methods=['GET', 'POST'])
+def edit_garantia(garantia_id):
+    """Editar garantia - apenas admin"""
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se é admin
+        cursor.execute('SELECT role FROM users WHERE id = ?', (session.get('user_id'),))
+        user_row = cursor.fetchone()
+        is_admin = user_row[0] == 'admin' if user_row else False
+        
+        if not is_admin:
+            return_db_connection(conn)
+            flash('Acesso negado. Apenas administradores podem editar garantias.', 'error')
+            return redirect(url_for('view_garantia', garantia_id=garantia_id))
+        
+        if request.method == 'POST':
+            # Atualizar garantia
+            cv = request.form.get('cv', '')
+            cv_date = request.form.get('cv_date', '')
+            client = request.form.get('client', '')
+            equipment = request.form.get('equipment', '')
+            quantity = request.form.get('quantity', '')
+            item_fornecido = request.form.get('item_fornecido', '')
+            setor_causador = request.form.get('setor_causador', '')
+            sector = request.form.get('sector', '')
+            priority = request.form.get('priority', 'Média')
+            area_responsavel = request.form.get('area_responsavel', '')
+            description = request.form.get('description', '')
+            status = request.form.get('status', 'Pendente')
+            
+            cursor.execute('''
+                UPDATE garantias SET
+                    cv = ?, cv_date = ?, client = ?, equipment = ?, quantity = ?,
+                    item_fornecido = ?, setor_causador = ?, sector = ?, priority = ?,
+                    area_responsavel = ?, description = ?, status = ?,
+                    updated_at = datetime('now', 'localtime')
+                WHERE id = ?
+            ''', (cv, cv_date, client, equipment, quantity, item_fornecido, setor_causador,
+                  sector, priority, area_responsavel, description, status, garantia_id))
+            
+            conn.commit()
+            return_db_connection(conn)
+            
+            logger.info(f"Garantia {garantia_id} editada por admin {session['user_id']}")
+            flash('Garantia atualizada com sucesso!', 'success')
+            return redirect(url_for('view_garantia', garantia_id=garantia_id))
+        
+        # GET - carregar dados
+        cursor.execute('''
+            SELECT g.*, u.name as creator_name
+            FROM garantias g
+            LEFT JOIN users u ON g.user_id = u.id
+            WHERE g.id = ?
+        ''', (garantia_id,))
+        
+        row = cursor.fetchone()
+        if not row:
+            return_db_connection(conn)
+            return render_template('error.html', message='Garantia não encontrada')
+        
+        columns = [description[0] for description in cursor.description]
+        garantia = dict(zip(columns, row))
+        
+        # Carregar grupos (setores) para dropdown
+        cursor.execute('SELECT id, name FROM groups ORDER BY name')
+        groups = cursor.fetchall()
+        
+        # Carregar clientes
+        cursor.execute('SELECT id, name FROM clients ORDER BY name')
+        clients = cursor.fetchall()
+        
+        # Carregar áreas
+        cursor.execute('SELECT id, name FROM areas ORDER BY name')
+        areas = cursor.fetchall()
+        
+        return_db_connection(conn)
+        return render_template('edit_garantia.html', garantia=garantia, groups=groups, 
+                             clients=clients, areas=areas, is_admin=is_admin)
+        
+    except Exception as e:
+        logger.error(f"Erro ao editar garantia: {e}")
+        return render_template('error.html', message=str(e))
 
 
 if __name__ == '__main__':
